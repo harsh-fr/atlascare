@@ -12,7 +12,6 @@ import logging
 import os
 from contextlib import asynccontextmanager
 
-# Load .env file before anything else — must happen before env var reads
 from dotenv import load_dotenv
 load_dotenv()
 
@@ -145,6 +144,8 @@ async def query(request: QueryRequest, http_request: Request) -> QueryResponse:
     escalation logic, and response assembly.  This layer is intentionally
     thin — it owns only HTTP concerns (timing, logging, error surfacing).
     """
+
+    # use monotonic as it is unidirectional internal clock immune to maunal changes in system clock
     wall_start = time.monotonic()
 
     tracer = Tracer(session_id=request.session_id)
@@ -154,7 +155,8 @@ async def query(request: QueryRequest, http_request: Request) -> QueryResponse:
         tracer.trace_id,
         request.message,
     )
-
+    
+    # handoff from APIs to agent
     orchestrator: Orchestrator = http_request.app.state.orchestrator
     result = await orchestrator.handle(
         message=request.message,

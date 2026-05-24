@@ -9,6 +9,16 @@
       "status": "initiated",
       "sla_days": 5,
       "created_at": "2026-05-24T07:09:39.688556+00:00"
+    },
+    {
+      "refund_id": "REF-88001-D5C26E0D",
+      "order_id": "ORD-88001",
+      "customer_id": "CUST-003",
+      "amount_inr": 4500.0,
+      "method": "original",
+      "status": "initiated",
+      "sla_days": 5,
+      "created_at": "2026-05-24T13:09:54.843045+00:00"
     }
   ]
 }
