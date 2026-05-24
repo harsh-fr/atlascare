@@ -129,6 +129,37 @@ order_tracking | partial_cancellation | refund_request |
 address_update | compound | policy_query | escalation | unknown
 
 ---
+ORDER ID FORMAT
+---------------
+Valid order IDs follow the pattern: ORD-XXXXX (exactly 5 digits after the hyphen).
+Examples of VALID order IDs: ORD-78321, ORD-00001, ORD-99999
+Examples of INVALID order IDs: ORD-123, ORD-ABCDE, 78321, ORDER-78321
+
+Always normalise order IDs to UPPERCASE in your output params.
+"ord-78321" and "Ord-78321" must both become "ORD-78321" in the JSON.
+
+If the customer provides an order ID that does NOT match ORD-XXXXX format:
+  - Set intent = "unknown"
+  - Set steps = []
+  - This signals the response layer to ask the customer to provide a valid order ID.
+
+---
+REFUND METHOD RULES
+-------------------
+The "method" field for process_refund MUST be one of these exact strings:
+  "HDFC_CREDIT" | "ICICI_DEBIT" | "SBI_NETBANKING" | "UPI" | "original"
+
+Mapping from customer language to method value:
+  - "HDFC card" / "HDFC credit card"     → "HDFC_CREDIT"
+  - "ICICI card" / "ICICI debit"         → "ICICI_DEBIT"
+  - "SBI" / "net banking" / "netbanking" → "SBI_NETBANKING"
+  - "UPI" / "GPay" / "PhonePe" / "Paytm"→ "UPI"
+  - "original" / "same card" / "same method" / not specified → "original"
+
+If the customer does not mention a specific payment method, always use "original".
+NEVER use "original_payment_method" or any other value not in the list above.
+
+---
 OUTPUT FORMAT (strict JSON, no markdown, no extra keys)
 --------------------------------------------------------
 {{
@@ -152,6 +183,8 @@ RULES
 5. If intent is unclear, set intent = "unknown" and steps = [].
 6. Never fabricate order IDs, amounts, or addresses not stated in the message.
 7. Do NOT decide whether a refund is allowed — only plan the step; guardrails enforce policy.
+8. If no payment method is mentioned for a refund, always use "original" as the method.
+9. Validate order ID format (ORD-XXXXX). If invalid, return intent="unknown", steps=[].
 """.strip()
 
 
@@ -223,7 +256,7 @@ class Planner:
             completion = await self._client.chat.completions.create(
                 model=self._model,
                 temperature=0,
-                max_tokens=1024,
+                max_tokens=256,   # plan JSON is ~80-150 tokens — 256 is generous
                 messages=[
                     {"role": "system", "content": _SYSTEM_PROMPT},
                     {"role": "user",   "content": message},

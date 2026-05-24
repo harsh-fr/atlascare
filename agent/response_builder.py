@@ -58,14 +58,24 @@ STRICT RULES
    or assume any details not explicitly present in that block.
 2. If a piece of information is missing from verified_data, say
    "I don't have that information right now" — do not fabricate it.
-3. Be concise but complete. Bullet points are fine for multi-step outcomes.
+3. Be concise but complete. Never cut off mid-sentence. Always finish
+   your response fully before stopping.
 4. Use INR amounts exactly as provided — do not round or reformat.
-5. If any step failed, acknowledge it honestly and suggest the customer
-   try again or contact support.
-6. Never mention internal system names (OMS, CRM, PaymentTool, trace_id,
+5. ORDER NOT FOUND: If a step failed because the order was not found,
+   clearly tell the customer: "I could not find order <ID> on your account.
+   Please check the order ID and try again." Do not say "system error".
+6. INVALID ORDER ID: If intent is "unknown" and no steps were planned,
+   tell the customer their order ID format looks incorrect and give
+   an example: "Order IDs follow the format ORD-XXXXX, for example
+   ORD-78321. Could you please check and try again?"
+7. If any step failed due to a refund method issue, list the valid
+   methods clearly: HDFC_CREDIT, ICICI_DEBIT, SBI_NETBANKING, UPI, original.
+8. If any step failed, acknowledge it honestly and suggest next steps.
+9. Never mention internal system names (OMS, CRM, PaymentTool, trace_id,
    step indices, etc.) in the customer-facing response.
-7. Always end with a helpful closing line offering further assistance.
-8. Do not repeat the customer's message back to them.
+10. Always end with a helpful closing line offering further assistance.
+11. Do not repeat the customer's message back to them.
+12. Write complete sentences. Never truncate your response.
 """.strip()
 
 
@@ -101,23 +111,54 @@ class ResponseBuilder:
         """
         Produce the final customer-facing response string.
 
-        For escalation cases: returns a deterministic template —
-        the LLM is NOT called, guaranteeing audit consistency.
+        Fast-path (no LLM call, deterministic):
+          - Escalation cases       → fixed template
+          - Order tracking success → built from tool data
+          - Order not found        → clear not-found message
+          - All steps failed       → clear error message
 
-        For all other cases: calls Gemini with verified tool output
-        data only, then validates the response is non-empty.
-
-        Falls back to ExecutionResult.fallback_summary() on any error.
+        LLM-assisted (Gemini called):
+          - Compound requests, refunds, address updates, KB queries
         """
 
         # ----------------------------------------------------------
-        # Escalation — fully deterministic, no LLM
+        # Fast-path 1 — Escalation (deterministic, no LLM)
         # ----------------------------------------------------------
         if execution_result.escalated:
             return self._escalation_response(execution_result)
 
         # ----------------------------------------------------------
-        # All other intents — LLM-assisted phrasing
+        # Fast-path 2 — Order tracking success (no LLM needed)
+        # Saves ~2-3 seconds on the most common query type.
+        # ----------------------------------------------------------
+        if (
+            plan.intent == Intent.ORDER_TRACKING
+            and execution_result.overall_success()
+        ):
+            order_data = execution_result.get_step_data(ActionType.GET_ORDER)
+            if order_data and "order" in order_data:
+                return self._order_tracking_response(order_data["order"])
+
+        # ----------------------------------------------------------
+        # Fast-path 3 — Order not found (deterministic, no LLM)
+        # ----------------------------------------------------------
+        if plan.intent == Intent.ORDER_TRACKING and not execution_result.any_success():
+            failed = execution_result.failed_steps()
+            if failed:
+                # Extract order_id from the failed step params
+                step_index = failed[0].step_index
+                order_id = "your order"
+                if step_index < len(plan.steps):
+                    order_id = plan.steps[step_index].params.get("order_id", "your order")
+                return (
+                    f"I could not find order **{order_id}** on your account. "
+                    "Please check the order ID and try again. "
+                    "Order IDs follow the format **ORD-XXXXX**, for example **ORD-78321**. "
+                    "You can find your order ID in your confirmation email or order history."
+                )
+
+        # ----------------------------------------------------------
+        # LLM-assisted — compound, refund, address, KB, unknown
         # ----------------------------------------------------------
         verified_data = self._build_verified_data(plan, execution_result)
         user_prompt   = self._build_user_prompt(
@@ -150,11 +191,6 @@ class ResponseBuilder:
     # Deterministic escalation response
     # ------------------------------------------------------------------
     def _escalation_response(self, result: ExecutionResult) -> str:
-        """
-        Returns a consistent, audit-safe escalation message.
-        The LLM is never used here — wording must be stable for
-        compliance and QA review.
-        """
         case_id = result.escalation_case_id or "pending"
         return (
             "Thank you for getting in touch. Your request requires review "
@@ -163,6 +199,63 @@ class ResponseBuilder:
             "A specialist will contact you within 24 hours to resolve this.\n\n"
             "We apologise for any inconvenience and appreciate your patience."
         )
+
+    # ------------------------------------------------------------------
+    # Deterministic order tracking response (fast-path, no LLM)
+    # ------------------------------------------------------------------
+    def _order_tracking_response(self, order: dict) -> str:
+        """
+        Build a complete order status response from verified tool data.
+        Zero LLM calls — deterministic, instant, grounded.
+        """
+        order_id   = order.get("order_id", "your order")
+        status     = order.get("status", "unknown").capitalize()
+        tracking   = order.get("tracking_number")
+        estimated  = order.get("estimated_delivery", "")
+        items      = order.get("items", [])
+        total      = order.get("total_amount", 0)
+        payment    = order.get("payment_method", "")
+
+        # Status-specific message
+        _STATUS_MESSAGES = {
+            "placed":     "Your order has been placed and is awaiting processing.",
+            "processing": "Your order is currently being processed and will be shipped soon.",
+            "shipped":    "Great news — your order is on its way!",
+            "delivered":  "Your order has been delivered.",
+            "cancelled":  "Your order has been cancelled.",
+        }
+        status_msg = _STATUS_MESSAGES.get(
+            order.get("status", "").lower(),
+            f"Your order status is: {status}."
+        )
+
+        lines = [f"Here's the update on order **{order_id}**:\n"]
+        lines.append(f"**Status:** {status_msg}")
+
+        if tracking:
+            lines.append(f"**Tracking Number:** {tracking}")
+
+        if estimated and order.get("status") not in ("delivered", "cancelled"):
+            lines.append(f"**Estimated Delivery:** {estimated}")
+
+        # Active items summary
+        active_items = [i for i in items if i.get("status") == "active"]
+        if active_items:
+            lines.append(f"**Items ({len(active_items)}):**")
+            for item in active_items:
+                lines.append(
+                    f"  - {item.get('name', 'Item')} "
+                    f"(x{item.get('quantity', 1)}) — "
+                    f"₹{item.get('unit_price', 0):,.2f}"
+                )
+
+        lines.append(f"**Order Total:** ₹{total:,.2f}")
+
+        lines.append(
+            "\nIs there anything else I can help you with?"
+        )
+
+        return "\n".join(lines)
 
     # ------------------------------------------------------------------
     # Verified data assembly — grounding the LLM
@@ -240,7 +333,7 @@ class ResponseBuilder:
         completion = await self._client.chat.completions.create(
             model=self._model,
             temperature=0.2,
-            max_tokens=512,
+            max_tokens=1024,
             messages=[
                 {"role": "system", "content": _SYSTEM_PROMPT},
                 {"role": "user",   "content": user_prompt},

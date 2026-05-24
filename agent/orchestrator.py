@@ -28,6 +28,7 @@ Design principles applied here
 """
 
 import logging
+import re
 from dataclasses import dataclass
 
 from agent.planner import Planner, ActionPlan
@@ -70,8 +71,43 @@ class Orchestrator:
         logger.debug("Orchestrator components initialised.")
 
     # ------------------------------------------------------------------
-    # Public interface
+    # Private helpers
     # ------------------------------------------------------------------
+    @staticmethod
+    def _check_order_id_format(message: str) -> str | None:
+        """
+        Detect if the message contains something that looks like an
+        order ID attempt but doesn't match the valid ORD-XXXXX pattern.
+
+        Returns a helpful user-facing correction message if an invalid
+        format is detected, or None if everything looks fine.
+
+        Valid format   : ORD-78321  (ORD- followed by exactly 5 digits)
+        Invalid examples: ORD-123, ORD-ABCDE, ORDER-78321, 78321
+        """
+        # Check if there's a valid order ID already — if so, no problem
+        valid_pattern   = re.compile(r'\bORD-\d{5}\b', re.IGNORECASE)
+        # Detect malformed attempts: ORD- with wrong suffix, or ORDER-
+        invalid_pattern = re.compile(
+            r'\b(ORD-\d{1,4}\b|ORD-\d{6,}\b|ORD-[A-Z]+\b|ORDER-\w+\b)',
+            re.IGNORECASE,
+        )
+
+        if valid_pattern.search(message):
+            return None  # Valid order ID present — no issue
+
+        match = invalid_pattern.search(message)
+        if match:
+            bad_id = match.group(0).upper()   # normalise for display
+            return (
+                f"It looks like the order ID **{bad_id}** may not be in the "
+                f"correct format. Order IDs should follow the pattern "
+                f"**ORD-XXXXX** (5 digits), for example **ORD-78321**. "
+                f"Could you please check your order ID and try again? "
+                f"You can find it in your order confirmation email."
+            )
+
+        return None  # No order ID attempt detected — let LLM handle it
     async def handle(
         self,
         message: str,
@@ -135,6 +171,17 @@ class Orchestrator:
                 verdict.reason,
             )
             return OrchestratorResult(response_text=verdict.user_message)
+
+        # ----------------------------------------------------------
+        # Step 2b — Order ID format check (deterministic, pre-LLM)
+        #
+        # If the message contains something that looks like an order
+        # ID but doesn't match ORD-XXXXX, catch it immediately and
+        # return a helpful format hint without wasting an LLM call.
+        # ----------------------------------------------------------
+        order_id_hint = self._check_order_id_format(message)
+        if order_id_hint:
+            return OrchestratorResult(response_text=order_id_hint)
 
         # ----------------------------------------------------------
         # Step 3 — Planning (LLM-assisted intent → action plan)

@@ -312,6 +312,7 @@ class Executor:
             # ------------------------------------------------------
             case ActionType.GET_ORDER:
                 order_id = self._require_param(p, "order_id", step.action)
+                order_id = order_id.strip().upper()
                 order = await self._oms.get_order(order_id)
                 self._assert_ownership(order["customer_id"], customer_id, order_id)
                 return {"order": order}
@@ -319,6 +320,7 @@ class Executor:
             # ------------------------------------------------------
             case ActionType.CANCEL_ITEM:
                 order_id = self._require_param(p, "order_id", step.action)
+                order_id = order_id.strip().upper()
                 line_id  = int(self._require_param(p, "line_id", step.action))
 
                 # Ownership check — fetch order first
@@ -331,8 +333,12 @@ class Executor:
             # ------------------------------------------------------
             case ActionType.PROCESS_REFUND:
                 order_id   = self._require_param(p, "order_id", step.action)
+                order_id   = order_id.strip().upper()
                 amount_inr = Decimal(str(self._require_param(p, "amount_inr", step.action)))
                 method     = p.get("method", "original")
+
+                # Normalise method — LLM occasionally returns verbose names
+                method = self._normalise_refund_method(method)
 
                 # Ownership
                 order = await self._oms.get_order(order_id)
@@ -349,6 +355,7 @@ class Executor:
             # ------------------------------------------------------
             case ActionType.UPDATE_ADDRESS:
                 order_id      = self._require_param(p, "order_id", step.action)
+                order_id      = order_id.strip().upper()
                 address_label = self._require_param(p, "address_label", step.action)
 
                 # Ownership
@@ -365,6 +372,7 @@ class Executor:
             # ------------------------------------------------------
             case ActionType.CREATE_CRM_CASE:
                 order_id   = self._require_param(p, "order_id", step.action)
+                order_id   = order_id.strip().upper()
                 reason     = self._require_param(p, "reason", step.action)
                 amount_inr = p.get("amount_inr")
 
@@ -386,6 +394,7 @@ class Executor:
             # ------------------------------------------------------
             case ActionType.ESCALATE:
                 order_id   = self._require_param(p, "order_id", step.action)
+                order_id   = order_id.strip().upper()
                 reason     = self._require_param(p, "reason", step.action)
                 amount_inr = p.get("amount_inr")
 
@@ -422,6 +431,56 @@ class Executor:
         return params[key]
 
     @staticmethod
+    def _normalise_refund_method(method: str) -> str:
+        """
+        Normalise LLM-generated refund method strings to the exact
+        values supported by the payment gateway.
+
+        The LLM sometimes returns verbose names like
+        'original_payment_method' or 'hdfc credit' instead of the
+        canonical enum values. This is a deterministic safety net.
+        """
+        _METHOD_MAP = {
+            # Canonical values — pass through unchanged
+            "hdfc_credit":       "HDFC_CREDIT",
+            "icici_debit":       "ICICI_DEBIT",
+            "sbi_netbanking":    "SBI_NETBANKING",
+            "upi":               "UPI",
+            "original":          "original",
+            # Common LLM variations
+            "hdfc":              "HDFC_CREDIT",
+            "hdfc credit":       "HDFC_CREDIT",
+            "hdfc credit card":  "HDFC_CREDIT",
+            "hdfc card":         "HDFC_CREDIT",
+            "icici":             "ICICI_DEBIT",
+            "icici debit":       "ICICI_DEBIT",
+            "icici debit card":  "ICICI_DEBIT",
+            "icici card":        "ICICI_DEBIT",
+            "sbi":               "SBI_NETBANKING",
+            "sbi net banking":   "SBI_NETBANKING",
+            "net banking":       "SBI_NETBANKING",
+            "netbanking":        "SBI_NETBANKING",
+            "gpay":              "UPI",
+            "google pay":        "UPI",
+            "phonepe":           "UPI",
+            "paytm":             "UPI",
+            "original_payment":          "original",
+            "original_payment_method":   "original",
+            "original payment method":   "original",
+            "same card":         "original",
+            "same method":       "original",
+            "source":            "original",
+        }
+        normalised = _METHOD_MAP.get(method.lower().strip(), None)
+        if normalised:
+            return normalised
+        # Unknown method — default to original rather than crashing
+        logger.warning(
+            "Unknown refund method '%s' — defaulting to 'original'", method
+        )
+        return "original"
+
+    @staticmethod
     def _assert_ownership(
         order_customer_id: str,
         session_customer_id: str,
@@ -434,7 +493,6 @@ class Executor:
         someone else (returns the same error as 'not found').
         """
         if order_customer_id != session_customer_id:
-            # Deliberately vague message to prevent customer enumeration
             raise OwnershipError(
                 f"Order {order_id} not found for the current session."
             )

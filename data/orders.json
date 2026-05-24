@@ -8,11 +8,10 @@
       "estimated_delivery": "2026-05-26",
       "tracking_number": null,
       "shipping_address": {
-        "line1": "12 MG Road",
-        "line2": "Koramangala",
+        "line1": "4th Floor, Prestige Tower, Outer Ring Road",
         "city": "Bengaluru",
         "state": "Karnataka",
-        "pincode": "560034"
+        "pincode": "560103"
       },
       "items": [
         {
@@ -29,7 +28,7 @@
           "name": "Laptop Backpack",
           "quantity": 1,
           "unit_price": 1500.0,
-          "status": "active"
+          "status": "cancelled"
         },
         {
           "line_id": 3,
@@ -40,7 +39,7 @@
           "status": "active"
         }
       ],
-      "total_amount": 57300.0,
+      "total_amount": 55800.0,
       "payment_method": "HDFC_CREDIT"
     },
     {

@@ -62,9 +62,10 @@ class OrderRepository:
     def find_by_id(self, order_id: str) -> dict[str, Any] | None:
         """
         Return the order dict for the given order_id, or None if not found.
+        Lookup is case-insensitive — "ord-78321" resolves to "ORD-78321".
         Returns a shallow copy to prevent accidental mutation of the index.
         """
-        order = self._orders.get(order_id)
+        order = self._orders.get(order_id.strip().upper())
         return dict(order) if order is not None else None
 
     def find_by_customer(self, customer_id: str) -> list[dict[str, Any]]:
@@ -108,6 +109,8 @@ class OrderRepository:
         if not order_id:
             raise ValueError("Cannot save order without 'order_id'.")
 
+        order_id = order_id.upper()
+        order["order_id"] = order_id          # keep record consistent
         self._orders[order_id] = order
         self._flush()
         logger.debug("OrderRepository.save | order_id=%s", order_id)
@@ -132,7 +135,7 @@ class OrderRepository:
             raw = json.load(fh)
 
         orders_list: list[dict] = raw.get("orders", [])
-        self._orders = {o["order_id"]: o for o in orders_list}
+        self._orders = {o["order_id"].upper(): o for o in orders_list}
 
     def _flush(self) -> None:
         """

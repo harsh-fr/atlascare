@@ -1,3 +1,14 @@
 {
-  "refunds": []
+  "refunds": [
+    {
+      "refund_id": "REF-78400-CCB06C05",
+      "order_id": "ORD-78400",
+      "customer_id": "CUST-001",
+      "amount_inr": 24999.0,
+      "method": "original",
+      "status": "initiated",
+      "sla_days": 5,
+      "created_at": "2026-05-24T07:09:39.688556+00:00"
+    }
+  ]
 }

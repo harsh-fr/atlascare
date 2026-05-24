@@ -79,6 +79,9 @@ class OmsTool:
         """
         Fetch a single order by ID.
 
+        Order ID lookup is case-insensitive — "ord-78321" and
+        "ORD-78321" resolve to the same order.
+
         Returns
         -------
         dict representation of the order (matches orders.json schema).
@@ -88,6 +91,7 @@ class OmsTool:
         OrderNotFoundError  if order_id does not exist.
         OmsError            on any unexpected repository failure.
         """
+        order_id = order_id.strip().upper()
         logger.debug("OmsTool.get_order | order_id=%s", order_id)
 
         order = self._order_repo.find_by_id(order_id)
@@ -133,6 +137,7 @@ class OmsTool:
             line_id,
         )
 
+        order_id = order_id.strip().upper()
         order = self._order_repo.find_by_id(order_id)
         if order is None:
             raise OrderNotFoundError(f"Order '{order_id}' not found.")
@@ -228,6 +233,7 @@ class OmsTool:
             address_label,
         )
 
+        order_id = order_id.strip().upper()
         order = self._order_repo.find_by_id(order_id)
         if order is None:
             raise OrderNotFoundError(f"Order '{order_id}' not found.")
