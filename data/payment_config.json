@@ -1,0 +1,16 @@
+{
+  "auto_refund_limit_inr": 25000,
+  "supported_methods": [
+    "HDFC_CREDIT",
+    "ICICI_DEBIT",
+    "SBI_NETBANKING",
+    "UPI",
+    "original"
+  ],
+  "refund_sla_days": 5,
+  "behaviour": {
+    "failure_rate": 0.03,
+    "failure_code": "504",
+    "failure_message": "PAYMENT_GATEWAY_TIMEOUT"
+  }
+}

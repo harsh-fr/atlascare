@@ -1,0 +1,36 @@
+{
+  "sessions": [
+    {
+      "session_id": "sess-cust001",
+      "customer_id": "CUST-001"
+    },
+    {
+      "session_id": "sess-cust002",
+      "customer_id": "CUST-002"
+    },
+    {
+      "session_id": "sess-cust003",
+      "customer_id": "CUST-003"
+    },
+    {
+      "session_id": "sess-cust004",
+      "customer_id": "CUST-004"
+    },
+    {
+      "session_id": "test-gold",
+      "customer_id": "CUST-001"
+    },
+    {
+      "session_id": "test-platinum",
+      "customer_id": "CUST-002"
+    },
+    {
+      "session_id": "test-standard",
+      "customer_id": "CUST-003"
+    },
+    {
+      "session_id": "test-silver",
+      "customer_id": "CUST-004"
+    }
+  ]
+}

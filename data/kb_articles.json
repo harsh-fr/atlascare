@@ -1,0 +1,96 @@
+{
+  "articles": [
+    {
+      "article_id": "KB-001",
+      "title": "Refund Policy and Threshold Rules",
+      "tags": [
+        "refund",
+        "threshold",
+        "payments",
+        "escalation",
+        "return"
+      ],
+      "content": "Acme Retail processes refunds automatically for amounts up to Rs.25,000 via the Payments Gateway. Refund requests exceeding Rs.25,000 must be escalated to a human specialist via the CRM. The specialist team has a 24-hour response SLA. Customers must raise refund requests within 30 days of delivery.",
+      "last_updated": "2025-04-01",
+      "applies_to": [
+        "electronics",
+        "apparel",
+        "home_goods"
+      ]
+    },
+    {
+      "article_id": "KB-002",
+      "title": "Return Window Policy",
+      "tags": [
+        "return",
+        "window",
+        "policy",
+        "days",
+        "eligible"
+      ],
+      "content": "Customers may return items within 30 days of delivery. Electronics are eligible for return within 7 days. Items must be unused and in original packaging.",
+      "last_updated": "2025-03-15",
+      "applies_to": [
+        "electronics",
+        "apparel",
+        "home_goods"
+      ]
+    },
+    {
+      "article_id": "KB-003",
+      "title": "Escalation SLA and Specialist Response Times",
+      "tags": [
+        "escalation",
+        "sla",
+        "specialist",
+        "response",
+        "24-hour"
+      ],
+      "content": "Escalated cases are assigned to a specialist within 2 hours. Specialists respond within 24 hours. High-priority cases (above Rs.25,000) are handled first.",
+      "last_updated": "2025-04-10",
+      "applies_to": [
+        "electronics",
+        "apparel",
+        "home_goods"
+      ]
+    },
+    {
+      "article_id": "KB-004",
+      "title": "Partial Cancellation and Address Update Rules",
+      "tags": [
+        "cancel",
+        "cancellation",
+        "partial",
+        "reship",
+        "address",
+        "update"
+      ],
+      "content": "Customers may cancel individual line items from orders in 'placed' or 'processing' status. Shipped or delivered orders require a return request. Address updates are allowed for orders not yet shipped.",
+      "last_updated": "2025-04-05",
+      "applies_to": [
+        "electronics",
+        "apparel",
+        "home_goods"
+      ]
+    },
+    {
+      "article_id": "KB-005",
+      "title": "Payment Methods and Refund Processing Times",
+      "tags": [
+        "payment",
+        "refund",
+        "methods",
+        "sla",
+        "days",
+        "processing"
+      ],
+      "content": "Supported methods: HDFC Credit, ICICI Debit, SBI Net Banking, UPI, and COD. Refunds reflect within 5 business days of initiation.",
+      "last_updated": "2025-03-20",
+      "applies_to": [
+        "electronics",
+        "apparel",
+        "home_goods"
+      ]
+    }
+  ]
+}

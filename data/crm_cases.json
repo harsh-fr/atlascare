@@ -1,0 +1,135 @@
+{
+  "customers": [
+    {
+      "customer_id": "CUST-001",
+      "name": "Priya Sharma",
+      "email": "priya.sharma@email.com",
+      "phone": "+91-9876543210",
+      "tier": "gold",
+      "order_ids": [
+        "ORD-78321",
+        "ORD-78322",
+        "ORD-78323",
+        "ORD-78324",
+        "ORD-78325",
+        "ORD-78400",
+        "ORD-78401",
+        "ORD-78402",
+        "ORD-78500"
+      ],
+      "preferred_refund_method": "HDFC_CREDIT",
+      "addresses": [
+        {
+          "label": "home",
+          "line1": "12 MG Road, Koramangala",
+          "city": "Bengaluru",
+          "state": "Karnataka",
+          "pincode": "560034"
+        },
+        {
+          "label": "office",
+          "line1": "4th Floor, Prestige Tower, Outer Ring Road",
+          "city": "Bengaluru",
+          "state": "Karnataka",
+          "pincode": "560103"
+        }
+      ]
+    },
+    {
+      "customer_id": "CUST-002",
+      "name": "Arjun Mehta",
+      "email": "arjun.mehta@email.com",
+      "phone": "+91-9812345678",
+      "tier": "platinum",
+      "order_ids": [
+        "ORD-99001",
+        "ORD-99002"
+      ],
+      "preferred_refund_method": "UPI",
+      "addresses": [
+        {
+          "label": "home",
+          "line1": "Flat 3B, Sunshine Apartments, Bandra West",
+          "city": "Mumbai",
+          "state": "Maharashtra",
+          "pincode": "400050"
+        },
+        {
+          "label": "office",
+          "line1": "WeWork, BKC, Bandra Kurla Complex",
+          "city": "Mumbai",
+          "state": "Maharashtra",
+          "pincode": "400051"
+        }
+      ]
+    },
+    {
+      "customer_id": "CUST-003",
+      "name": "Divya Nair",
+      "email": "divya.nair@email.com",
+      "phone": "+91-9988776655",
+      "tier": "standard",
+      "order_ids": [
+        "ORD-88001"
+      ],
+      "preferred_refund_method": "original",
+      "addresses": [
+        {
+          "label": "home",
+          "line1": "22 Anna Salai, Teynampet",
+          "city": "Chennai",
+          "state": "Tamil Nadu",
+          "pincode": "600018"
+        }
+      ]
+    },
+    {
+      "customer_id": "CUST-004",
+      "name": "Rahul Gupta",
+      "email": "rahul.gupta@email.com",
+      "phone": "+91-9001234567",
+      "tier": "silver",
+      "order_ids": [
+        "ORD-77001",
+        "ORD-77002"
+      ],
+      "preferred_refund_method": "ICICI_DEBIT",
+      "addresses": [
+        {
+          "label": "home",
+          "line1": "B-45, Sector 62, Noida",
+          "city": "Noida",
+          "state": "Uttar Pradesh",
+          "pincode": "201301"
+        },
+        {
+          "label": "office",
+          "line1": "Tower C, Cyber City, DLF Phase 2",
+          "city": "Gurugram",
+          "state": "Haryana",
+          "pincode": "122002"
+        },
+        {
+          "label": "parents",
+          "line1": "12 Civil Lines",
+          "city": "Allahabad",
+          "state": "Uttar Pradesh",
+          "pincode": "211001"
+        }
+      ]
+    }
+  ],
+  "cases": [
+    {
+      "case_id": "CASE-EXIST1",
+      "customer_id": "CUST-001",
+      "order_id": "ORD-78323",
+      "status": "resolved",
+      "priority": "medium",
+      "description": "[ESCALATION CASE - AtlasCare]\nCustomer  : CUST-001\nOrder     : ORD-78323\nPriority  : MEDIUM\nAmount    : N/A\nReason    : Wrong size delivered.\nAction    : Requires specialist review.\nTrace ID  : trc-historical01",
+      "amount_inr": null,
+      "trace_id": "trc-historical01",
+      "created_at": "2026-05-09T00:58:46.488957+00:00"
+    }
+  ]
+}
