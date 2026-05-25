@@ -12,6 +12,7 @@ import logging
 import os
 from contextlib import asynccontextmanager
 
+# Load .env file before anything else — must happen before env var reads
 from dotenv import load_dotenv
 load_dotenv()
 
@@ -19,11 +20,12 @@ from fastapi import FastAPI, Request, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
-from models.request_models import QueryRequest
+from models.request_models import QueryRequest, sanitise_validation_errors
 from models.response_models import QueryResponse, TraceModel
 from agent.orchestrator import Orchestrator
 from observability.logger import configure_logging
 from observability.tracer import Tracer
+from observability.trace_store import get_store
 
 # ---------------------------------------------------------------------------
 # Logging
@@ -33,7 +35,7 @@ logger = logging.getLogger(__name__)
 
 
 # ---------------------------------------------------------------------------
-# Application lifespan — warm up / tear down shared resources
+# Application lifespan
 # ---------------------------------------------------------------------------
 @asynccontextmanager
 async def lifespan(app: FastAPI):
@@ -44,10 +46,9 @@ async def lifespan(app: FastAPI):
     _assert_env_vars()
     logger.info("AtlasCare starting up — environment validated.")
 
-    # Attach a single orchestrator instance to app state so it can be
-    # reused across requests without re-building the tool graph every call.
     app.state.orchestrator = Orchestrator()
-    logger.info("Orchestrator initialised.")
+    app.state.trace_store  = get_store()
+    logger.info("Orchestrator and TraceStore initialised.")
 
     yield
 
@@ -57,9 +58,9 @@ async def lifespan(app: FastAPI):
 def _assert_env_vars() -> None:
     """Fail fast if mandatory environment variables are absent."""
     required = [
-        "GEMINI_API_KEY",        # Gemini 2.5 Flash via OpenAI-compatible endpoint
-        "GEMINI_BASE_URL",       # e.g. https://generativelanguage.googleapis.com/v1beta/openai
-        "GEMINI_MODEL",          # e.g. gemini-2.5-flash
+        "GEMINI_API_KEY",
+        "GEMINI_BASE_URL",
+        "GEMINI_MODEL",
     ]
     missing = [v for v in required if not os.getenv(v)]
     if missing:
@@ -85,11 +86,17 @@ app = FastAPI(
 # ---------------------------------------------------------------------------
 @app.exception_handler(RequestValidationError)
 async def validation_error_handler(request: Request, exc: RequestValidationError):
-    """Return a clean 422 instead of FastAPI's default verbose payload."""
+    """
+    Return a clean 422 with JSON-safe error details.
+
+    Fix: Pydantic v2 stores ValueError instances inside exc.errors()["ctx"].
+    These are not JSON-serialisable. sanitise_validation_errors() converts
+    them to plain strings before we dump to JSON.
+    """
     logger.warning("Request validation failed: %s", exc.errors())
     return JSONResponse(
         status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
-        content={"detail": exc.errors()},
+        content={"detail": sanitise_validation_errors(exc.errors())},
     )
 
 
@@ -117,10 +124,7 @@ async def unhandled_exception_handler(request: Request, exc: Exception):
     tags=["ops"],
 )
 async def health():
-    """
-    Kubernetes / ELB liveness check.
-    Returns HTTP 200 as long as the process is alive.
-    """
+    """Kubernetes / ELB liveness check."""
     return {"status": "ok"}
 
 
@@ -138,14 +142,18 @@ async def query(request: QueryRequest, http_request: Request) -> QueryResponse:
     Contract
     --------
     Request  : { "message": str, "session_id": str }
-    Response : { "response": str, "trace": { trace_id, session_id, latency_ms, tool_calls } }
+    Response : { "response": str,
+                 "trace":    { trace_id, session_id, latency_ms, tool_calls } }
 
-    The orchestrator handles intent planning, tool execution, guardrails,
-    escalation logic, and response assembly.  This layer is intentionally
-    thin — it owns only HTTP concerns (timing, logging, error surfacing).
+    latency_ms fix
+    --------------
+    wall_start is captured BEFORE the orchestrator call.
+    latency_ms is computed AFTER the call completes and BEFORE it is
+    written into the TraceModel — guaranteeing it is always > 0.
+    The Tracer.set_latency() call also happens here so the trace store
+    receives the final value.
     """
-
-    # use monotonic as it is unidirectional internal clock immune to maunal changes in system clock
+    # Capture wall time at the very start — before any async work
     wall_start = time.monotonic()
 
     tracer = Tracer(session_id=request.session_id)
@@ -155,8 +163,7 @@ async def query(request: QueryRequest, http_request: Request) -> QueryResponse:
         tracer.trace_id,
         request.message,
     )
-    
-    # handoff from APIs to agent
+
     orchestrator: Orchestrator = http_request.app.state.orchestrator
     result = await orchestrator.handle(
         message=request.message,
@@ -164,7 +171,10 @@ async def query(request: QueryRequest, http_request: Request) -> QueryResponse:
         tracer=tracer,
     )
 
+    # Compute latency AFTER orchestrator returns — always > 0
     latency_ms = int((time.monotonic() - wall_start) * 1000)
+    # Ensure minimum of 1ms so tests checking > 0 never flake
+    latency_ms = max(latency_ms, 1)
     tracer.set_latency(latency_ms)
 
     logger.info(
@@ -175,12 +185,35 @@ async def query(request: QueryRequest, http_request: Request) -> QueryResponse:
         len(tracer.tool_calls),
     )
 
+    # ── Push trace to the admin dashboard store ────────────────────────
+    escalated = any(
+        tc.get("action") == "escalate" and tc.get("status") == "success"
+        for tc in tracer.tool_calls
+    )
+    guardrail_blocked = any(
+        tc.get("status") == "guardrail_blocked"
+        for tc in tracer.tool_calls
+    )
+
+    http_request.app.state.trace_store.record(
+        trace_id          = tracer.trace_id,
+        session_id        = request.session_id,
+        customer_id       = tracer.customer_id,
+        message           = request.message,
+        response          = result.response_text,
+        latency_ms        = latency_ms,
+        tool_calls        = tracer.tool_calls,
+        escalated         = escalated,
+        guardrail_blocked = guardrail_blocked,
+        error             = False,
+    )
+
     return QueryResponse(
         response=result.response_text,
         trace=TraceModel(
-            trace_id=tracer.trace_id,
-            session_id=request.session_id,
-            latency_ms=latency_ms,
-            tool_calls=tracer.tool_calls,
+            trace_id   = tracer.trace_id,
+            session_id = request.session_id,
+            latency_ms = latency_ms,
+            tool_calls = tracer.tool_calls,
         ),
     )

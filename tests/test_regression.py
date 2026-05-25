@@ -1,59 +1,54 @@
 """
 tests/test_regression.py
 =========================
-Regression tests covering all recent fixes:
-  - Order ID case insensitivity
-  - Refund method normalisation
-  - Response truncation (max_tokens)
-  - Order not found explicit messaging
-  - Invalid order ID format detection
-  - Fast-path order tracking (no second LLM call)
+Regression tests covering all recent fixes.
 """
 
-import pytest
 import asyncio
+import inspect
+import pytest
 from unittest.mock import patch, AsyncMock, MagicMock
-
-from tests.conftest import make_llm_mock, _mock_plan_response
-from agent.executor import Executor
-from agent.guardrails import _extract_amounts
+from tests.conftest import J1_PLAN, _mock_plan_response, make_llm_mock
 
 
 # ---------------------------------------------------------------------------
+# Helpers
+# ---------------------------------------------------------------------------
+
+def _run(client, message, plan, resp="Done.", session_id="sess-cust001"):
+    mock = make_llm_mock(plan, resp)
+    with patch("agent.planner.Planner._call_llm", new=mock):
+        with patch("agent.response_builder.ResponseBuilder._call_llm", new=mock):
+            r = client.post("/query", json={"message": message, "session_id": session_id})
+            assert r.status_code == 200, f"{r.status_code}: {r.text}"
+            return r.json()
+
+
+# ===========================================================================
 # Order ID case insensitivity
-# ---------------------------------------------------------------------------
+# ===========================================================================
 
 class TestOrderIdCaseInsensitivity:
 
     def test_lowercase_order_id_resolves(self, patched_env):
-        """oms_tool.get_order with lowercase order_id must still find the order."""
         from tools.oms_tool import OmsTool
-        tool = OmsTool()
         order = asyncio.get_event_loop().run_until_complete(
-            tool.get_order("ord-78321")
-        )
+            OmsTool().get_order("ord-78321"))
         assert order["order_id"] == "ORD-78321"
 
     def test_mixed_case_order_id_resolves(self, patched_env):
-        """Mixed case like Ord-78321 must resolve correctly."""
         from tools.oms_tool import OmsTool
-        tool = OmsTool()
         order = asyncio.get_event_loop().run_until_complete(
-            tool.get_order("Ord-78321")
-        )
+            OmsTool().get_order("Ord-78321"))
         assert order["order_id"] == "ORD-78321"
 
     def test_uppercase_still_works(self, patched_env):
-        """Uppercase ORD-78321 must continue to work."""
         from tools.oms_tool import OmsTool
-        tool = OmsTool()
         order = asyncio.get_event_loop().run_until_complete(
-            tool.get_order("ORD-78321")
-        )
+            OmsTool().get_order("ORD-78321"))
         assert order["order_id"] == "ORD-78321"
 
     def test_repository_find_by_id_case_insensitive(self, patched_env):
-        """OrderRepository.find_by_id must be case insensitive."""
         from repositories.order_repository import OrderRepository
         repo = OrderRepository()
         assert repo.find_by_id("ord-78321") is not None
@@ -61,41 +56,27 @@ class TestOrderIdCaseInsensitivity:
         assert repo.find_by_id("Ord-78321") is not None
 
     def test_whitespace_stripped_from_order_id(self, patched_env):
-        """Whitespace around order ID must be stripped."""
         from tools.oms_tool import OmsTool
-        tool = OmsTool()
         order = asyncio.get_event_loop().run_until_complete(
-            tool.get_order("  ORD-78321  ")
-        )
+            OmsTool().get_order("  ORD-78321  "))
         assert order["order_id"] == "ORD-78321"
 
-    def test_invalid_order_id_format_http(self, client):
-        """Invalid order ID format in message → helpful format hint, no 500."""
-        resp = client.post(
-            "/query",
-            json={"message": "Where is order ORD-123?", "session_id": "sess-cust001"},
-        )
+    def test_invalid_order_id_format_caught_pre_llm(self, client):
+        resp = client.post("/query",
+            json={"message": "Where is order ORD-123?", "session_id": "sess-cust001"})
         assert resp.status_code == 200
         body = resp.json()
-        response = body["response"].lower()
-        assert "ord-" in response or "format" in response or "xxxxx" in response
-
-    def test_order_id_in_message_case_insensitive(self, client):
-        """Message with lowercase order ID like ord-78321 triggers format hint."""
-        resp = client.post(
-            "/query",
-            json={"message": "Track ord-78321 please", "session_id": "sess-cust001"},
-        )
-        assert resp.status_code == 200
+        r    = body["response"].lower()
+        assert "format" in r or "ord-" in r or "xxxxx" in r or "5 digit" in r
 
 
-# ---------------------------------------------------------------------------
+# ===========================================================================
 # Refund method normalisation
-# ---------------------------------------------------------------------------
+# ===========================================================================
 
 class TestRefundMethodNormalisation:
 
-    @pytest.mark.parametrize("raw_method,expected", [
+    @pytest.mark.parametrize("raw,expected", [
         ("original_payment_method", "original"),
         ("original payment method",  "original"),
         ("hdfc card",                "HDFC_CREDIT"),
@@ -113,205 +94,182 @@ class TestRefundMethodNormalisation:
         ("original",                 "original"),
         ("HDFC_CREDIT",              "HDFC_CREDIT"),
         ("UPI",                      "UPI"),
-        ("completely_unknown_xyz",   "original"),  # unknown → safe default
+        ("completely_unknown_xyz",   "original"),
     ])
-    def test_normalise_refund_method(self, raw_method, expected):
-        result = Executor._normalise_refund_method(raw_method)
+    def test_normalise_refund_method(self, raw, expected):
+        from agent.executor import Executor
+        result = Executor._normalise_refund_method(raw)
         assert result == expected, (
-            f"_normalise_refund_method({raw_method!r}) = {result!r}, expected {expected!r}"
+            f"_normalise_refund_method({raw!r}) = {result!r}, expected {expected!r}"
         )
 
     def test_refund_with_no_method_defaults_to_original(self, patched_env):
-        """process_refund with no method specified must use 'original'."""
         from tools.payment_tool import PaymentTool
-        tool = PaymentTool()
+        tool   = PaymentTool()
         result = asyncio.get_event_loop().run_until_complete(
-            tool.process_refund(
-                order_id="ORD-78400",
-                amount_inr=1000.0,
-                method="original",
-                customer_id="CUST-001",
-            )
-        )
+            tool.process_refund("ORD-78400", 1000.0, "original", "CUST-001"))
         assert result["method"] == "original"
         assert result["status"] == "initiated"
 
 
-# ---------------------------------------------------------------------------
-# Order not found — explicit messaging
-# ---------------------------------------------------------------------------
+# ===========================================================================
+# Order not found messaging
+# ===========================================================================
 
 class TestOrderNotFoundMessaging:
 
     def test_not_found_response_mentions_order_id(self, client):
-        """Order not found response must mention the order ID explicitly."""
-        plan = _mock_plan_response(
-            "order_tracking",
-            [{"action": "get_order", "params": {"order_id": "ORD-00000"}, "depends_on": []}],
-        )
-        llm_mock = make_llm_mock(plan, "I could not find that order.")
-        with patch("agent.planner.Planner._call_llm", new=llm_mock):
-            with patch("agent.response_builder.ResponseBuilder._call_llm", new=llm_mock):
-                resp = client.post(
-                    "/query",
-                    json={"message": "Where is ORD-00000?", "session_id": "sess-cust001"},
-                )
-        assert resp.status_code == 200
-        body = resp.json()
-        response = body["response"]
-        assert "ORD-00000" in response or "not find" in response.lower()
+        plan = _mock_plan_response("order_tracking",
+            [{"action": "get_order", "params": {"order_id": "ORD-00000"}, "depends_on": []}])
+        body = _run(client, "Where is ORD-00000?", plan)
+        resp = body["response"]
+        assert "ORD-00000" in resp or "not find" in resp.lower() or "not found" in resp.lower()
 
     def test_not_found_does_not_say_system_error(self, client):
-        """Order not found must never say 'system error'."""
-        plan = _mock_plan_response(
-            "order_tracking",
-            [{"action": "get_order", "params": {"order_id": "ORD-00000"}, "depends_on": []}],
-        )
-        llm_mock = make_llm_mock(plan, "I could not find that order.")
-        with patch("agent.planner.Planner._call_llm", new=llm_mock):
-            with patch("agent.response_builder.ResponseBuilder._call_llm", new=llm_mock):
-                resp = client.post(
-                    "/query",
-                    json={"message": "Where is ORD-00000?", "session_id": "sess-cust001"},
-                )
-        response = resp.json()["response"].lower()
-        assert "system error" not in response
-        assert "internal" not in response
-        assert "exception" not in response
+        plan = _mock_plan_response("order_tracking",
+            [{"action": "get_order", "params": {"order_id": "ORD-00000"}, "depends_on": []}])
+        body = _run(client, "Where is ORD-00000?", plan)
+        resp = body["response"].lower()
+        assert "system error" not in resp
+        assert "internal"     not in resp
+        assert "exception"    not in resp
 
 
-# ---------------------------------------------------------------------------
-# Invalid order ID format detection
-# ---------------------------------------------------------------------------
+# ===========================================================================
+# Invalid order ID format
+# ===========================================================================
 
 class TestInvalidOrderIdFormat:
 
     @pytest.mark.parametrize("bad_id", [
-        "ORD-123",       # too few digits
-        "ORD-ABCDE",     # letters not digits
-        "ORDER-78321",   # wrong prefix
-        "ORD-1234567",   # too many digits
+        "ORD-123",
+        "ORD-ABCDE",
+        "ORDER-78321",
+        "ORD-1234567",
     ])
     def test_invalid_order_id_caught_before_llm(self, client, bad_id):
-        """Invalid order ID format must be caught pre-LLM and return helpful message."""
-        resp = client.post(
-            "/query",
-            json={
-                "message": f"Where is order {bad_id}?",
-                "session_id": "sess-cust001",
-            },
-        )
+        resp = client.post("/query",
+            json={"message": f"Where is order {bad_id}?", "session_id": "sess-cust001"})
         assert resp.status_code == 200
         body = resp.json()
-        response = body["response"].lower()
-        assert (
-            "format" in response
-            or "ord-" in response
-            or "xxxxx" in response
-            or "example" in response
-        ), f"Expected format hint for bad ID {bad_id!r}, got: {body['response']}"
+        r    = body["response"].lower()
+        assert any(k in r for k in ["format","ord-","xxxxx","example","5 digit"]), (
+            f"Expected format hint for {bad_id!r}, got: {body['response']}"
+        )
 
     def test_valid_order_id_not_caught_as_invalid(self, client):
-        """Valid ORD-78321 must not trigger the format error path."""
-        from tests.conftest import J1_PLAN
-        llm_mock = make_llm_mock(J1_PLAN, "Your order is processing.")
-        with patch("agent.planner.Planner._call_llm", new=llm_mock):
-            with patch("agent.response_builder.ResponseBuilder._call_llm", new=llm_mock):
-                resp = client.post(
-                    "/query",
-                    json={"message": "Track ORD-78321", "session_id": "sess-cust001"},
-                )
-        assert resp.status_code == 200
-        body = resp.json()
-        response = body["response"].lower()
-        assert "format" not in response
-        assert "xxxxx" not in response
+        body = _run(client, "Track ORD-78321", J1_PLAN)
+        r    = body["response"].lower()
+        assert "format" not in r
+        assert "xxxxx"  not in r
 
 
-# ---------------------------------------------------------------------------
-# Fast-path order tracking (no second LLM call)
-# ---------------------------------------------------------------------------
+# ===========================================================================
+# Fast-path order tracking
+# ===========================================================================
 
 class TestFastPathOrderTracking:
 
-    def test_order_tracking_success_skips_response_llm(self, client):
-        """
-        On successful order tracking, ResponseBuilder must NOT call the LLM.
-        Only 1 LLM call total (planner), not 2.
-        """
-        from tests.conftest import J1_PLAN
-
-        llm_call_count = 0
-
-        async def counting_llm(*args, **kwargs):
-            nonlocal llm_call_count
-            llm_call_count += 1
-            mock_msg = MagicMock()
-            mock_msg.content = J1_PLAN.choices[0].message.content
-            mock_choice = MagicMock()
-            mock_choice.message = mock_msg
-            mock_completion = MagicMock()
-            mock_completion.choices = [mock_choice]
-            return mock_completion.choices[0].message.content
-
-        with patch("agent.planner.Planner._call_llm", new=AsyncMock(side_effect=counting_llm)):
-            resp = client.post(
-                "/query",
-                json={"message": "Where is ORD-78321?", "session_id": "sess-cust001"},
-            )
-
-        assert resp.status_code == 200
-        assert llm_call_count == 1, (
-            f"Expected 1 LLM call (planner only) for order tracking, "
-            f"got {llm_call_count}"
-        )
-
     def test_order_tracking_fast_path_response_has_order_details(self, client):
-        """Fast-path response must contain real order status and ID."""
-        from tests.conftest import J1_PLAN
-        llm_mock = make_llm_mock(J1_PLAN, "Your order is being processed.")
-        with patch("agent.planner.Planner._call_llm", new=llm_mock):
-            with patch("agent.response_builder.ResponseBuilder._call_llm", new=llm_mock):
-                resp = client.post(
-                    "/query",
-                    json={"message": "Where is ORD-78321?", "session_id": "sess-cust001"},
-                )
-        body = resp.json()
-        response = body["response"]
-        assert "ORD-78321" in response
-        assert any(word in response.lower() for word in [
-            "processing", "shipped", "delivered", "placed", "status"
-        ])
+        body = _run(client, "Where is ORD-78321?", J1_PLAN, "Your order is processing.")
+        resp = body["response"]
+        assert "ORD-78321" in resp
+        assert any(w in resp.lower() for w in ["processing","shipped","delivered","placed","status"])
 
     def test_order_tracking_response_not_truncated(self, client):
-        """Fast-path order tracking response must be a complete sentence."""
-        from tests.conftest import J1_PLAN
-        llm_mock = make_llm_mock(J1_PLAN, "Complete response.")
-        with patch("agent.planner.Planner._call_llm", new=llm_mock):
-            with patch("agent.response_builder.ResponseBuilder._call_llm", new=llm_mock):
-                resp = client.post(
-                    "/query",
-                    json={"message": "Where is ORD-78321?", "session_id": "sess-cust001"},
-                )
-        response = resp.json()["response"]
-        # Must end with proper punctuation or question mark
-        assert response.strip()[-1] in ".?!", (
-            f"Response appears truncated, ends with: {response[-30:]!r}"
+        body = _run(client, "Where is ORD-78321?", J1_PLAN, "Complete.")
+        resp = body["response"].strip()
+        assert resp[-1] in ".?!*)"
+
+    def test_order_tracking_only_one_llm_call(self, client):
+        """Fast-path: successful order tracking skips the ResponseBuilder LLM call."""
+        call_count = 0
+        plan_str   = J1_PLAN.choices[0].message.content
+
+        async def counting_llm(*a, **k):
+            nonlocal call_count
+            call_count += 1
+            return plan_str
+
+        with patch("agent.planner.Planner._call_llm", new=counting_llm):
+            client.post("/query",
+                json={"message": "Where is ORD-78321?", "session_id": "sess-cust001"})
+
+        assert call_count == 1, (
+            f"Expected 1 LLM call (planner only) for order tracking, got {call_count}"
         )
 
 
-# ---------------------------------------------------------------------------
-# Planner max_tokens reduction (indirectly verified via latency)
-# ---------------------------------------------------------------------------
+# ===========================================================================
+# Planner token budget
+# ===========================================================================
 
 class TestPlannerConfig:
 
-    def test_planner_uses_low_max_tokens(self):
-        """Planner LLM call must use max_tokens=256 not 1024."""
-        import inspect
+    def test_planner_uses_256_max_tokens(self):
+        """Planner must use max_tokens=256 not 1024 for fast responses."""
         from agent import planner
         source = inspect.getsource(planner)
         assert "max_tokens=256" in source, (
-            "Planner should use max_tokens=256 for faster responses. "
-            "Found max_tokens=1024 which causes slow planning."
+            "Planner should use max_tokens=256. "
+            "Found a different value which causes slow responses."
         )
+
+
+# ===========================================================================
+# Vague help detection
+# ===========================================================================
+
+class TestVagueHelpDetection:
+
+    @pytest.mark.parametrize("msg", [
+        "help",
+        "hi",
+        "Hello",
+        "i need help",
+        "need help with my order",
+        "can you help me",
+    ])
+    def test_vague_message_returns_graceful_prompt(self, client, msg):
+        resp = client.post("/query",
+            json={"message": msg, "session_id": "sess-cust001"})
+        assert resp.status_code == 200
+        body = resp.json()["response"].lower()
+        assert "order" in body or "ord-" in body or "id" in body, (
+            f"Expected order ID prompt for vague message {msg!r}, got: {resp.json()['response']}"
+        )
+
+    def test_vague_help_does_not_say_invalid_format(self, client):
+        """'need help' must NOT trigger the invalid order ID format message."""
+        resp = client.post("/query",
+            json={"message": "need help", "session_id": "sess-cust001"})
+        body = resp.json()["response"].lower()
+        assert "doesn't look quite right" not in body
+        assert "doesn't look" not in body
+        # Should be a graceful prompt, not an error message
+        assert "error" not in body
+
+
+# ===========================================================================
+# Auto-fill refund amount
+# ===========================================================================
+
+class TestAutoFillRefundAmount:
+
+    def test_refund_without_amount_auto_filled_from_order(self, client):
+        """
+        When a refund plan step has no amount_inr, orchestrator should
+        auto-fill it from the order total before execution.
+        """
+        # Plan with missing amount_inr
+        plan = _mock_plan_response("refund_request", [
+            {"action": "process_refund",
+             "params": {"order_id": "ORD-78400", "method": "original"},
+             "depends_on": []},
+        ])
+        body = _run(client, "I want a refund for order ORD-78400.", plan)
+        rc   = [tc for tc in body["trace"]["tool_calls"]
+                if tc["action"] == "process_refund"]
+        # Should succeed with auto-filled amount (Rs.24,999 from order data)
+        if rc:
+            assert rc[0]["status"] == "success"

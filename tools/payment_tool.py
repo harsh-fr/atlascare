@@ -252,7 +252,13 @@ class PaymentTool:
 
         last_error: Exception | None = None
 
-        for attempt in range(1, MAX_RETRIES + 1):
+        # Read module-level constants at call time (not at import time)
+        # so patch.object() in tests can override them reliably.
+        import tools.payment_tool as _self_mod
+        max_retries       = _self_mod.MAX_RETRIES
+        retry_base_delay  = _self_mod.RETRY_BASE_DELAY_S
+
+        for attempt in range(1, max_retries + 1):
             t0 = time.monotonic()
 
             # Simulate gateway timeout based on configured failure rate
@@ -263,15 +269,15 @@ class PaymentTool:
                     "code=%s | latency_ms=%d",
                     order_id,
                     attempt,
-                    MAX_RETRIES,
+                    max_retries,
                     failure_code,
                     latency_ms,
                 )
                 last_error = PaymentGatewayError(
                     f"Gateway timeout (simulated {failure_code}) on attempt {attempt}."
                 )
-                if attempt < MAX_RETRIES:
-                    delay = RETRY_BASE_DELAY_S * (2 ** (attempt - 1))
+                if attempt < max_retries:
+                    delay = retry_base_delay * (2 ** (attempt - 1))
                     logger.info(
                         "Retrying payment in %.2fs | order=%s | attempt=%d",
                         delay,
@@ -307,6 +313,6 @@ class PaymentTool:
 
         # All retries exhausted
         raise PaymentGatewayError(
-            f"Payment gateway failed after {MAX_RETRIES} attempts "
+            f"Payment gateway failed after {max_retries} attempts "
             f"for order '{order_id}'. Last error: {last_error}"
         )
