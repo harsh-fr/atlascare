@@ -55,6 +55,12 @@ _session_history: dict[str, deque] = defaultdict(lambda: deque(maxlen=10))
 class OrchestratorResult:
     """Thin result envelope returned to the HTTP layer."""
     response_text: str
+    task_complete: bool = False
+
+
+def clear_session_history(session_id: str) -> None:
+    """Remove all server-side conversation history for a terminated session."""
+    _session_history.pop(session_id, None)
 
 
 # ---------------------------------------------------------------------------
@@ -113,7 +119,19 @@ class Orchestrator:
                            tracer.trace_id, verdict.rule_id)
             return OrchestratorResult(response_text=verdict.user_message)
 
-        # ── Step 3: Vague help detection (pre-LLM, deterministic) ──────
+        # ── Step 3a: Greeting detection — route to LLM for natural reply ──
+        if self._is_greeting(raw_message, session_id):
+            history = _session_history[session_id]
+            try:
+                response = await self._response_builder.converse(
+                    raw_message, list(history), tracer
+                )
+            except Exception:
+                response = "Hello! Welcome to AtlasCare. How can I help you today?"
+            self._store_turn(session_id, raw_message, response)
+            return OrchestratorResult(response_text=response, task_complete=False)
+
+        # ── Step 3b: Vague help detection (pre-LLM, deterministic) ────────
         if self._is_vague_help(raw_message, session_id):
             response = (
                 "Of course, I'm happy to help! 😊\n\n"
@@ -123,7 +141,7 @@ class Orchestrator:
                 "order confirmation email or order history page."
             )
             self._store_turn(session_id, raw_message, response)
-            return OrchestratorResult(response_text=response)
+            return OrchestratorResult(response_text=response, task_complete=False)
 
         # ── Step 4: Order ID format check (pre-LLM, deterministic) ─────
         # Only fires when message contains something that looks like a
@@ -204,7 +222,10 @@ class Orchestrator:
         # ── Store turn in session history ───────────────────────────────
         self._store_turn(session_id, raw_message, response_text)
 
-        return OrchestratorResult(response_text=response_text)
+        return OrchestratorResult(
+            response_text=response_text,
+            task_complete=execution_result.any_success(),
+        )
 
     # ------------------------------------------------------------------
     # Conversation history helpers
@@ -258,14 +279,44 @@ class Orchestrator:
         return message
 
     # ------------------------------------------------------------------
+    # Greeting detection — route to LLM for natural conversation
+    # ------------------------------------------------------------------
+    _GREETING_PATTERNS = re.compile(
+        r"^\s*("
+        r"hi|hello|hey|good morning|good afternoon|good evening|"
+        r"howdy|greetings|what'?s up|sup"
+        r")\s*[.!?]?\s*$",
+        re.IGNORECASE,
+    )
+
+    @classmethod
+    def _is_greeting(cls, message: str, session_id: str) -> bool:
+        """
+        True when the message is a pure greeting with no order ID context.
+        These are routed to the LLM for a natural conversational response.
+        """
+        stripped = message.strip()
+        if re.search(r'\bORD[-\s]?\d', stripped, re.IGNORECASE):
+            return False
+        if not cls._GREETING_PATTERNS.match(stripped):
+            return False
+        # Once a conversation is in progress (order ID seen), don't intercept
+        history = _session_history[session_id]
+        if history:
+            combined = " ".join(t["content"] for t in history)
+            if re.search(r'\bORD-\d{5}\b', combined, re.IGNORECASE):
+                return False
+        return True
+
+    # ------------------------------------------------------------------
     # Vague help detection
     # ------------------------------------------------------------------
     _VAGUE_PATTERNS = re.compile(
         r"^\s*("
-        r"help|i need help|need help|hi|hello|hey|good morning|good afternoon|"
-        r"good evening|i have an issue|i have a problem|i need assistance|"
-        r"can you help|can you help me|need help with my order|"
-        r"help with order|help with my order|i need support|support"
+        r"help|i need help|need help|i have an issue|i have a problem|"
+        r"i need assistance|can you help|can you help me|"
+        r"need help with my order|help with order|help with my order|"
+        r"i need support|support"
         r")\s*[.!?]?\s*$",
         re.IGNORECASE,
     )

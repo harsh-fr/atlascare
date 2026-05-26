@@ -324,6 +324,40 @@ class ResponseBuilder:
         )
 
     # ------------------------------------------------------------------
+    # Conversational response (greetings, chitchat)
+    # ------------------------------------------------------------------
+    _CONVERSE_SYSTEM = (
+        "You are AtlasCare, a warm and friendly customer support assistant for "
+        "Acme Retail Co. When a customer greets you, welcome them naturally and "
+        "ask how you can help today. Keep responses concise (2-3 sentences). "
+        "Do not ask for an Order ID unprompted — just engage conversationally."
+    )
+
+    async def converse(
+        self,
+        message: str,
+        history: list[dict],
+        tracer: Tracer,
+    ) -> str:
+        """Direct LLM call for conversational/greeting messages."""
+        messages: list[dict] = [{"role": "system", "content": self._CONVERSE_SYSTEM}]
+        for turn in history[-4:]:
+            role = turn.get("role", "user")
+            content = turn.get("content", "")[:200]
+            messages.append({"role": role, "content": content})
+        messages.append({"role": "user", "content": message})
+
+        completion = await self._client.chat.completions.create(
+            model=self._model,
+            temperature=0.7,
+            max_tokens=200,
+            messages=messages,
+        )
+        return (completion.choices[0].message.content or "").strip() or (
+            "Hello! Welcome to AtlasCare. How can I help you today?"
+        )
+
+    # ------------------------------------------------------------------
     # LLM call
     # ------------------------------------------------------------------
     async def _call_llm(self, user_prompt: str, tracer: Tracer) -> str:

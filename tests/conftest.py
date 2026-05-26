@@ -21,6 +21,7 @@ The second call (response_builder) returns the response text string.
 Both _call_llm methods return raw strings so this matches exactly.
 """
 
+import hashlib
 import json
 import os
 import pytest
@@ -45,6 +46,22 @@ os.environ.setdefault("PAYMENT_RETRY_BASE_DELAY_S", "0.0")
 # ---------------------------------------------------------------------------
 # Synthetic data builders
 # ---------------------------------------------------------------------------
+
+def _make_user(
+    username: str,
+    customer_id: str,
+    email: str | None = None,
+    password: str = "Atlas@123",
+) -> dict[str, Any]:
+    return {
+        "user_id":       f"USER-{username.upper()}",
+        "username":      username,
+        "email":         email or f"{username}@test.com",
+        "password_hash": hashlib.sha256(password.encode()).hexdigest(),
+        "customer_id":   customer_id,
+        "created_at":    "2025-01-01T00:00:00Z",
+    }
+
 
 def _make_customer(
     customer_id: str = "CUST-001",
@@ -381,6 +398,17 @@ def data_dir(tmp_path: Path) -> Path:
         encoding="utf-8",
     )
 
+    # Users (auth credentials — separate from CRM customer data)
+    users_data = {
+        "users": [
+            _make_user("alice", "CUST-001", password="Atlas@123"),
+            _make_user("bob",   "CUST-002", password="Atlas@456"),
+        ]
+    }
+    (d / "users.json").write_text(
+        json.dumps(users_data, indent=2), encoding="utf-8"
+    )
+
     return d
 
 
@@ -396,6 +424,7 @@ def patched_env(data_dir: Path, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setenv("PAYMENT_CONFIG_PATH", str(data_dir / "payment_config.json"))
     monkeypatch.setenv("REFUNDS_DATA_PATH",   str(data_dir / "refunds.json"))
     monkeypatch.setenv("SESSIONS_DATA_PATH",  str(data_dir / "sessions.json"))
+    monkeypatch.setenv("USERS_DATA_PATH",     str(data_dir / "users.json"))
 
 
 # ---------------------------------------------------------------------------

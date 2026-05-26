@@ -224,8 +224,6 @@ class TestVagueHelpDetection:
 
     @pytest.mark.parametrize("msg", [
         "help",
-        "hi",
-        "Hello",
         "i need help",
         "need help with my order",
         "can you help me",
@@ -238,6 +236,16 @@ class TestVagueHelpDetection:
         assert "order" in body or "ord-" in body or "id" in body, (
             f"Expected order ID prompt for vague message {msg!r}, got: {resp.json()['response']}"
         )
+
+    @pytest.mark.parametrize("msg", ["hi", "Hello", "hey"])
+    def test_greeting_returns_welcome_response(self, client, msg):
+        resp = client.post("/query",
+            json={"message": msg, "session_id": "sess-cust001"})
+        assert resp.status_code == 200
+        body = resp.json()["response"].lower()
+        # Greetings route to LLM; fallback is a welcome message — not an error
+        assert "doesn't look" not in body
+        assert "invalid" not in body
 
     def test_vague_help_does_not_say_invalid_format(self, client):
         """'need help' must NOT trigger the invalid order ID format message."""

@@ -170,7 +170,7 @@ class TestQueryResponseContract:
 
     def test_no_extra_top_level_fields(self, client):
         body  = _valid_query(client)
-        extra = set(body.keys()) - {"response", "trace"}
+        extra = set(body.keys()) - {"response", "trace", "task_complete"}
         assert not extra, f"Unexpected top-level keys: {extra}"
 
     def test_response_is_valid_json_serialisable(self, client):

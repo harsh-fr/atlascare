@@ -20,12 +20,15 @@ from fastapi import FastAPI, Request, status
 from fastapi.exceptions import RequestValidationError
 from fastapi.responses import JSONResponse
 
+from pydantic import BaseModel as _BaseModel
+
 from models.request_models import QueryRequest, sanitise_validation_errors
 from models.response_models import QueryResponse, TraceModel
-from agent.orchestrator import Orchestrator
+from agent.orchestrator import Orchestrator, clear_session_history
 from observability.logger import configure_logging
 from observability.tracer import Tracer
 from observability.trace_store import get_store
+from services.auth_service import AuthService
 
 # ---------------------------------------------------------------------------
 # Logging
@@ -46,9 +49,10 @@ async def lifespan(app: FastAPI):
     _assert_env_vars()
     logger.info("AtlasCare starting up — environment validated.")
 
-    app.state.orchestrator = Orchestrator()
-    app.state.trace_store  = get_store()
-    logger.info("Orchestrator and TraceStore initialised.")
+    app.state.orchestrator  = Orchestrator()
+    app.state.trace_store   = get_store()
+    app.state.auth_service  = AuthService()
+    logger.info("Orchestrator, TraceStore, and AuthService initialised.")
 
     yield
 
@@ -210,6 +214,7 @@ async def query(request: QueryRequest, http_request: Request) -> QueryResponse:
 
     return QueryResponse(
         response=result.response_text,
+        task_complete=result.task_complete,
         trace=TraceModel(
             trace_id   = tracer.trace_id,
             session_id = request.session_id,
@@ -217,3 +222,76 @@ async def query(request: QueryRequest, http_request: Request) -> QueryResponse:
             tool_calls = tracer.tool_calls,
         ),
     )
+
+
+# ---------------------------------------------------------------------------
+# Session cleanup
+# ---------------------------------------------------------------------------
+@app.delete(
+    "/session/{session_id}",
+    status_code=status.HTTP_200_OK,
+    summary="Clear server-side session history",
+    tags=["ops"],
+)
+async def delete_session(session_id: str):
+    """Called by the frontend when a session ends to free server memory."""
+    clear_session_history(session_id)
+    return {"cleared": True}
+
+
+# ---------------------------------------------------------------------------
+# Auth models (inline — kept simple per design intent)
+# ---------------------------------------------------------------------------
+class _LoginRequest(_BaseModel):
+    username: str
+    password: str
+
+class _RegisterRequest(_BaseModel):
+    username: str
+    password: str
+    email: str
+    customer_id: str
+
+class _OtpRequest(_BaseModel):
+    username: str
+
+class _ResetPasswordRequest(_BaseModel):
+    username: str
+    otp: str
+    new_password: str
+
+
+# ---------------------------------------------------------------------------
+# Auth endpoints
+# ---------------------------------------------------------------------------
+@app.post("/auth/login", status_code=status.HTTP_200_OK, tags=["auth"])
+async def auth_login(body: _LoginRequest, http_request: Request):
+    svc: AuthService = http_request.app.state.auth_service
+    result = svc.login(body.username, body.password)
+    return {
+        "success":     result.success,
+        "session_id":  result.session_id,
+        "customer_id": result.customer_id,
+        "error":       result.error,
+    }
+
+
+@app.post("/auth/register", status_code=status.HTTP_200_OK, tags=["auth"])
+async def auth_register(body: _RegisterRequest, http_request: Request):
+    svc: AuthService = http_request.app.state.auth_service
+    result = svc.register(body.username, body.password, body.email, body.customer_id)
+    return {"success": result.success, "error": result.error, "message": result.message}
+
+
+@app.post("/auth/request-otp", status_code=status.HTTP_200_OK, tags=["auth"])
+async def auth_request_otp(body: _OtpRequest, http_request: Request):
+    svc: AuthService = http_request.app.state.auth_service
+    result = svc.request_otp(body.username)
+    return {"success": result.success, "message": result.message}
+
+
+@app.post("/auth/reset-password", status_code=status.HTTP_200_OK, tags=["auth"])
+async def auth_reset_password(body: _ResetPasswordRequest, http_request: Request):
+    svc: AuthService = http_request.app.state.auth_service
+    result = svc.reset_password(body.username, body.otp, body.new_password)
+    return {"success": result.success, "error": result.error, "message": result.message}
