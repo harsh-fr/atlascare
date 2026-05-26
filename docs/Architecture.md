@@ -53,16 +53,35 @@ kb_repo
 |------|-----------|-------------|--------------|
 | 1 | SessionStore | Code | `session_id` → `customer_id` resolution |
 | 2 | Guardrails.pre_check | Code | Policy rules before LLM sees message |
-| 3 | Planner | LLM (Gemini) | Intent extraction → typed ActionPlan |
-| 4 | Executor | Code | Tool dispatch with ownership validation |
-| 5 | Guardrails.post_check | Code | Verify execution outcomes comply |
-| 6 | ResponseBuilder | LLM (Gemini) | Ground verified data → natural reply |
+| 3 | Orchestrator — greeting branch | **Llama 3.1 8B Instant** | Pure greetings routed directly to conversational reply, skip planning |
+| 4 | Planner | **Llama 3.3 70B Versatile** | Intent extraction → typed ActionPlan (JSON) |
+| 5 | Executor | Code | Tool dispatch with ownership validation |
+| 6 | Guardrails.post_check | Code | Verify execution outcomes comply |
+| 7 | ResponseBuilder — fast paths | Code | Deterministic templates for order tracking, escalation, not-found |
+| 8 | ResponseBuilder — LLM path | **Llama 3.1 8B Instant** | Ground verified data → natural reply for compound/refund/KB queries |
 
 ---
 
-## 4. Planning Strategy
+## 4. LLM Model Routing
 
-The Planner sends the customer message to Gemini 2.5 Flash with a **constrained system prompt** that forces JSON output conforming to a strict action schema. The model returns an `ActionPlan` with:
+Two Llama models are used via the Groq API (OpenAI-compatible endpoint). Using both is intentional — planning accuracy and response latency have different requirements.
+
+| Flow node | Model | Rationale |
+|---|---|---|
+| Greeting / chitchat (`ResponseBuilder.converse`) | **Llama 3.1 8B Instant** | Trivial conversational reply; speed and cost matter, not reasoning depth |
+| Vague help, order ID format check, guardrails | — (deterministic) | Regex/code rules; no LLM required |
+| **Intent classification + action planning** (`Planner`) | **Llama 3.3 70B Versatile** | Structured JSON output with multi-step dependency reasoning; wrong plan here cascades to wrong tool calls |
+| Order tracking response | — (deterministic) | Template fast-path; covers the most common query type without an LLM call |
+| Escalation response | — (deterministic) | Fixed template for audit consistency |
+| **Response synthesis** for refund/compound/KB queries (`ResponseBuilder.build`) | **Llama 3.1 8B Instant** | Formats verified tool data into natural language; reasoning depth not needed, latency matters |
+
+**Config**: `PLANNER_MODEL` and `RESPONSE_MODEL` env vars — set in `.env`, pointing to `api.groq.com/openai/v1`.
+
+---
+
+## 5. Planning Strategy
+
+The Planner sends the customer message to Llama 3.3 70B Versatile with a **constrained system prompt** that forces JSON output conforming to a strict action schema. The model returns an `ActionPlan` with:
 
 - `intent`: classified intent (order_tracking, compound, escalation, etc.)
 - `steps[]`: ordered `ActionStep` list with `action`, `params`, `depends_on`
@@ -71,7 +90,7 @@ The Planner sends the customer message to Gemini 2.5 Flash with a **constrained 
 
 ---
 
-## 5. Tool Design
+## 6. Tool Design
 
 Tools are MCP-inspired typed async interfaces. They are the **only** layer that touches repositories. Agent code never accesses JSON files directly.
 
@@ -86,7 +105,7 @@ Tools are swappable — replacing JSON repos with REST APIs requires only changi
 
 ---
 
-## 6. Guardrails (Defence in Depth)
+## 7. Guardrails (Defence in Depth)
 
 Three independent layers enforce the Rs.25,000 threshold:
 
@@ -104,7 +123,7 @@ Three independent layers enforce the Rs.25,000 threshold:
 
 ---
 
-## 7. Observability
+## 8. Observability
 
 Every request produces a `Tracer` with:
 - `trace_id`: `trc-<12 hex chars>` — unique per request
@@ -117,7 +136,7 @@ Structured JSON logging (configurable via `LOG_FORMAT=json|text`) emits every lo
 
 ---
 
-## 8. Security
+## 9. Security
 
 - **Ownership enforcement**: `order.customer_id == session_customer_id` checked before every tool mutation. Implemented in `Executor._assert_ownership()`.
 - **Error opacity**: `OwnershipError` returns `"Order not found"` — never reveals the real owner.
@@ -126,7 +145,7 @@ Structured JSON logging (configurable via `LOG_FORMAT=json|text`) emits every lo
 
 ---
 
-## 9. Data Layer
+## 10. Data Layer
 
 All data is stored in JSON files under `data/`. Repositories maintain in-memory indexes (O(1) lookup) and flush to disk atomically using write-to-temp + `os.replace()` to prevent corruption.
 
@@ -139,7 +158,7 @@ File ownership:
 
 ---
 
-## 10. Known Limitations
+## 11. Known Limitations
 
 - JSON-backed storage is not suitable for concurrent multi-process deployments. Production would use PostgreSQL or DynamoDB.
 - Session store is a simulation. Production would integrate with OAuth/JWT.
