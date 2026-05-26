@@ -7,8 +7,8 @@ Responsibility
 --------------
   1. Take the execution results (tool outputs, step outcomes) and
      assemble a grounded, accurate, customer-facing response.
-  2. Use Gemini ONLY for natural language phrasing — never for
-     deciding what happened or fabricating missing data.
+  2. Use Llama 3.1 8B Instant ONLY for natural language phrasing — never
+     for deciding what happened or fabricating missing data.
   3. If the LLM call fails, fall back to a deterministic template
      so the customer always receives a reply.
 
@@ -91,10 +91,10 @@ class ResponseBuilder:
 
     def __init__(self) -> None:
         self._client = AsyncOpenAI(
-            api_key=os.environ["GEMINI_API_KEY"],
-            base_url=os.environ["GEMINI_BASE_URL"],
+            api_key=os.environ["GROQ_API_KEY"],
+            base_url=os.environ["GROQ_BASE_URL"],
         )
-        self._model = os.environ["GEMINI_MODEL"]
+        self._model = os.environ["RESPONSE_MODEL"]
         logger.debug("ResponseBuilder initialised with model=%s", self._model)
 
     # ------------------------------------------------------------------

@@ -97,17 +97,6 @@ def _do_login(username: str, password: str):
         return {"success": False, "error": f"Connection error: {str(exc)[:60]}"}
 
 
-def _do_register(username: str, password: str, email: str, customer_id: str):
-    try:
-        resp = requests.post(f"{AUTH_URL}/register",
-                             json={"username": username, "password": password,
-                                   "email": email, "customer_id": customer_id},
-                             timeout=10)
-        return resp.json()
-    except Exception as exc:
-        return {"success": False, "error": f"Connection error: {str(exc)[:60]}"}
-
-
 def _do_request_otp(username: str):
     try:
         resp = requests.post(f"{AUTH_URL}/request-otp",
@@ -317,16 +306,6 @@ with gr.Blocks(title="AtlasCare Customer Support", theme=gr.themes.Soft()) as de
                 login_btn      = gr.Button("Login", variant="primary")
                 login_msg      = gr.Markdown("")
 
-            # ── Register ─────────────────────────────────────────────────
-            with gr.Tab("📝 Register"):
-                reg_username    = gr.Textbox(label="Username")
-                reg_email       = gr.Textbox(label="Email")
-                reg_customer_id = gr.Textbox(label="Customer ID",
-                                             placeholder="e.g. CUST-004")
-                reg_password    = gr.Textbox(label="Password", type="password")
-                reg_btn         = gr.Button("Register", variant="primary")
-                reg_msg         = gr.Markdown("")
-
             # ── Forgot Password ──────────────────────────────────────────
             with gr.Tab("🔑 Forgot Password"):
                 fp_username    = gr.Textbox(label="Username")
@@ -410,19 +389,6 @@ with gr.Blocks(title="AtlasCare Customer Support", theme=gr.themes.Soft()) as de
         inputs=[login_username, login_password],
         outputs=[auth_col, chat_col, session_id_state, customer_id_state,
                  logged_in_as, status_box, chatbot, login_msg],
-    )
-
-    def do_register(username, email, customer_id, password):
-        data = _do_register(username.strip(), password,
-                            email.strip(), customer_id.strip())
-        if data.get("success"):
-            return f"✅ {data.get('message', 'Account created. Please log in.')}"
-        return f"❌ {data.get('error', 'Registration failed')}"
-
-    reg_btn.click(
-        fn=do_register,
-        inputs=[reg_username, reg_email, reg_customer_id, reg_password],
-        outputs=[reg_msg],
     )
 
     def do_request_otp(username):

@@ -62,9 +62,10 @@ async def lifespan(app: FastAPI):
 def _assert_env_vars() -> None:
     """Fail fast if mandatory environment variables are absent."""
     required = [
-        "GEMINI_API_KEY",
-        "GEMINI_BASE_URL",
-        "GEMINI_MODEL",
+        "GROQ_API_KEY",
+        "GROQ_BASE_URL",
+        "PLANNER_MODEL",
+        "RESPONSE_MODEL",
     ]
     missing = [v for v in required if not os.getenv(v)]
     if missing:

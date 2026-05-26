@@ -28,7 +28,7 @@ from dataclasses import dataclass, field
 from enum import Enum
 from typing import Any
 
-from openai import AsyncOpenAI  # Gemini via OpenAI-compatible endpoint
+from openai import AsyncOpenAI  # Groq via OpenAI-compatible endpoint
 from observability.tracer import Tracer
 
 logger = logging.getLogger(__name__)
@@ -193,18 +193,18 @@ RULES
 # ---------------------------------------------------------------------------
 class Planner:
     """
-    Calls Gemini 2.5 Flash to convert a raw customer message into a
-    typed ActionPlan.
+    Calls Llama 3.3 70B Versatile (via Groq) to convert a raw customer
+    message into a typed ActionPlan.
 
     Thread / async safe — no mutable instance state after __init__.
     """
 
     def __init__(self) -> None:
         self._client = AsyncOpenAI(
-            api_key=os.environ["GEMINI_API_KEY"],
-            base_url=os.environ["GEMINI_BASE_URL"],
+            api_key=os.environ["GROQ_API_KEY"],
+            base_url=os.environ["GROQ_BASE_URL"],
         )
-        self._model = os.environ["GEMINI_MODEL"]
+        self._model = os.environ["PLANNER_MODEL"]
         logger.debug("Planner initialised with model=%s", self._model)
 
     # ------------------------------------------------------------------

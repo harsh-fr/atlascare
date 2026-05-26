@@ -35,9 +35,10 @@ from fastapi.testclient import TestClient
 # ---------------------------------------------------------------------------
 # Environment — must be set before any app imports
 # ---------------------------------------------------------------------------
-os.environ.setdefault("GEMINI_API_KEY",             "test-key-not-real")
-os.environ.setdefault("GEMINI_BASE_URL",            "https://generativelanguage.googleapis.com/v1beta/openai")
-os.environ.setdefault("GEMINI_MODEL",               "gemini-2.5-flash")
+os.environ.setdefault("GROQ_API_KEY",               "test-key-not-real")
+os.environ.setdefault("GROQ_BASE_URL",              "https://api.groq.com/openai/v1")
+os.environ.setdefault("PLANNER_MODEL",              "llama-3.3-70b-versatile")
+os.environ.setdefault("RESPONSE_MODEL",             "llama-3.1-8b-instant")
 os.environ.setdefault("AUTO_REFUND_LIMIT_INR",      "25000.0")
 os.environ.setdefault("PAYMENT_MAX_RETRIES",        "1")
 os.environ.setdefault("PAYMENT_RETRY_BASE_DELAY_S", "0.0")
