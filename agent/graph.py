@@ -1,11 +1,3 @@
-"""
-agent/graph.py
-==============
-LangGraph agent pipeline.
-
-  pre_guardrail → tool_agent → tool_executor → post_guardrail → responder
-"""
-
 import json
 import logging
 import operator
@@ -35,8 +27,6 @@ _payment    = PaymentTool()
 _kb         = KbTool()
 
 
-# ── State ─────────────────────────────────────────────────────────────────────
-
 class AtlasCareState(TypedDict):
     messages:          Annotated[list, operator.add]
     customer_id:       str
@@ -48,8 +38,7 @@ class AtlasCareState(TypedDict):
     task_complete:     bool
 
 
-# ── Tool schemas ──────────────────────────────────────────────────────────────
-
+#tools
 TOOLS = [
     {"type": "function", "function": {
         "name": "get_order",
@@ -150,8 +139,6 @@ _RESPONSE_SYSTEM = (
 )
 
 
-# ── Groq client (lazy singleton) ──────────────────────────────────────────────
-
 _groq_client: AsyncOpenAI | None = None
 
 def _get_groq_client() -> AsyncOpenAI:
@@ -162,9 +149,6 @@ def _get_groq_client() -> AsyncOpenAI:
             base_url=os.environ["GROQ_BASE_URL"],
         )
     return _groq_client
-
-
-# ── Ownership ─────────────────────────────────────────────────────────────────
 
 class OwnershipError(Exception):
     pass
@@ -178,9 +162,6 @@ async def _fetch_owned_order(oid: str, customer_id: str) -> dict:
     order = await _oms.get_order(oid)
     _assert_ownership(order["customer_id"], customer_id, oid)
     return order
-
-
-# ── Refund method normalisation ───────────────────────────────────────────────
 
 _METHOD_MAP = {
     "hdfc_credit": "HDFC_CREDIT", "icici_debit": "ICICI_DEBIT",
@@ -198,9 +179,6 @@ _METHOD_MAP = {
 
 def _normalise_refund_method(method: str) -> str:
     return _METHOD_MAP.get(method.lower().strip(), "original")
-
-
-# ── Order ID format check (pre-LLM, deterministic) ───────────────────────────
 
 _VALID_ORDER_RE   = re.compile(r'\bORD-\d{5}\b', re.IGNORECASE)
 _INVALID_ORDER_RE = re.compile(
@@ -220,9 +198,6 @@ def _check_order_id_format(message: str) -> str | None:
         )
     return None
 
-
-# ── Model routing (complexity classifier) ─────────────────────────────────────
-
 _COMPLEXITY_SIGNALS = frozenset([
     "damaged", "defective", "broken", "not working", "never arrived",
     "wrong item", "fraud", "stolen", "complaint", "legal", "lawsuit",
@@ -232,12 +207,8 @@ _MULTI_ACTION_VERBS = ["cancel", "refund", "return", "update", "change", "reship
 
 def _is_complex(message: str) -> bool:
     """
-    True  → use PLANNER_MODEL (70B) for accurate tool selection.
-    False → use RESPONSE_MODEL (8B) for speed; target <3 s end-to-end.
-
-    Simple: single-intent order queries (track, cancel one item, process one
-    refund, update address). Complex: escalation signals, multiple distinct
-    actions in one message, or ambiguous high-stakes language.
+    aim is to use PLANNER_MODEL (70B) for accurate tool selection.
+    and           RESPONSE_MODEL (8B) for speed; target <3 s end-to-end.
     """
     lower = message.lower()
     if any(sig in lower for sig in _COMPLEXITY_SIGNALS):
@@ -246,9 +217,6 @@ def _is_complex(message: str) -> bool:
     if action_count >= 2:
         return True
     return False
-
-
-# ── Tool dispatcher ────────────────────────────────────────────────────────────
 
 async def _dispatch_tool(
     tool_name: str,
@@ -446,6 +414,17 @@ async def post_guardrail_node(state: AtlasCareState, config) -> dict:
     return {}
 
 
+async def loop_breaker_node(state: AtlasCareState, config) -> dict:
+    return {
+        "final_response": (
+            "I'm sorry, I'm having trouble accessing our systems right now. "
+            "I've flagged your request and a member of our support team will follow up with you shortly."
+        ),
+        "task_complete": False,
+        "guardrail_blocked": True,
+    }
+
+
 async def responder_node(state: AtlasCareState, config) -> dict:
     """Generate the customer-facing response."""
     tracer: Tracer = config["configurable"]["tracer"]
@@ -522,7 +501,9 @@ def _route_pre_guardrail(state: AtlasCareState) -> str:
 
 def _route_tool_agent(state: AtlasCareState) -> str:
     last = state["messages"][-1]
-    if last.get("tool_calls") and state["tool_call_count"] < 3:
+    if last.get("tool_calls"):
+        if state["tool_call_count"] >= 3:
+            return "loop_breaker"
         return "tools"
     return "respond"
 
@@ -539,16 +520,19 @@ def build_graph(checkpointer=None):
     g.add_node("tool_agent",     tool_agent_node)
     g.add_node("tool_executor",  tool_executor_node)
     g.add_node("post_guardrail", post_guardrail_node)
+    g.add_node("loop_breaker",   loop_breaker_node)
     g.add_node("responder",      responder_node)
 
     g.add_edge(START, "pre_guardrail")
     g.add_conditional_edges("pre_guardrail",  _route_pre_guardrail,
                             {"end": END, "tool_agent": "tool_agent"})
     g.add_conditional_edges("tool_agent",     _route_tool_agent,
-                            {"tools": "tool_executor", "respond": "post_guardrail"})
+                            {"tools": "tool_executor", "respond": "post_guardrail",
+                             "loop_breaker": "loop_breaker"})
     g.add_edge("tool_executor", "post_guardrail")
     g.add_conditional_edges("post_guardrail", _route_post_guardrail,
                             {"end": END, "responder": "responder"})
+    g.add_edge("loop_breaker", END)
     g.add_edge("responder", END)
 
     return g.compile(checkpointer=checkpointer)

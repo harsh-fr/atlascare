@@ -39,7 +39,7 @@ async def lifespan(app: FastAPI):
     app.state.trace_store   = get_store()
     app.state.auth_service  = AuthService()
     app.state.session_store = SessionStore()
-    app.state.crm_tool      = _graph_crm   # shared with agent — no duplicate instance
+    app.state.crm_tool      = _graph_crm
     app.state.kb_tool       = _graph_kb
     logger.info("Graph, TraceStore, AuthService, and SessionStore initialised.")
 
