@@ -117,10 +117,10 @@
           "name": "Clean Code by Robert Martin",
           "quantity": 1,
           "unit_price": 750.0,
-          "status": "active"
+          "status": "cancelled"
         }
       ],
-      "total_amount": 750.0,
+      "total_amount": 0.0,
       "payment_method": "UPI"
     },
     {
@@ -158,11 +158,10 @@
       "estimated_delivery": "2026-05-27",
       "tracking_number": null,
       "shipping_address": {
-        "line1": "12 MG Road",
-        "line2": "Koramangala",
+        "line1": "4th Floor, Prestige Tower, Outer Ring Road",
         "city": "Bengaluru",
         "state": "Karnataka",
-        "pincode": "560034"
+        "pincode": "560103"
       },
       "items": [
         {
@@ -171,10 +170,10 @@
           "name": "Fossil Gen 6 Smartwatch",
           "quantity": 1,
           "unit_price": 24999.0,
-          "status": "active"
+          "status": "cancelled"
         }
       ],
-      "total_amount": 24999.0,
+      "total_amount": 0.0,
       "payment_method": "HDFC_CREDIT"
     },
     {
@@ -185,11 +184,10 @@
       "estimated_delivery": "2026-05-27",
       "tracking_number": null,
       "shipping_address": {
-        "line1": "12 MG Road",
-        "line2": "Koramangala",
+        "line1": "4th Floor, Prestige Tower, Outer Ring Road",
         "city": "Bengaluru",
         "state": "Karnataka",
-        "pincode": "560034"
+        "pincode": "560103"
       },
       "items": [
         {
@@ -198,10 +196,10 @@
           "name": "Samsung Galaxy Tab S8",
           "quantity": 1,
           "unit_price": 25000.0,
-          "status": "active"
+          "status": "cancelled"
         }
       ],
-      "total_amount": 25000.0,
+      "total_amount": 0.0,
       "payment_method": "HDFC_CREDIT"
     },
     {
@@ -395,6 +393,170 @@
       ],
       "total_amount": 38500.0,
       "payment_method": "ICICI_DEBIT"
+    },
+
+    {
+      "order_id": "ORD-55001",
+      "customer_id": "CUST-001",
+      "status": "processing",
+      "created_at": "2026-05-25T10:00:00Z",
+      "estimated_delivery": "2026-06-01",
+      "tracking_number": null,
+      "shipping_address": {
+        "line1": "12 MG Road, Koramangala",
+        "city": "Bengaluru",
+        "state": "Karnataka",
+        "pincode": "560034"
+      },
+      "items": [
+        {
+          "line_id": 1,
+          "product_id": "PROD-FAN-011",
+          "name": "Havells Ceiling Fan",
+          "quantity": 1,
+          "unit_price": 3200.0,
+          "status": "active"
+        },
+        {
+          "line_id": 2,
+          "product_id": "PROD-IRON-004",
+          "name": "Philips Steam Iron",
+          "quantity": 2,
+          "unit_price": 1800.0,
+          "status": "active"
+        }
+      ],
+      "total_amount": 6800.0,
+      "payment_method": "COD",
+      "_note": "COD undelivered (processing) — cancel works, no electronic refund needed since not yet paid"
+    },
+
+    {
+      "order_id": "ORD-55002",
+      "customer_id": "CUST-001",
+      "status": "delivered",
+      "created_at": "2026-05-10T09:00:00Z",
+      "estimated_delivery": "2026-05-17",
+      "tracking_number": "TRACK-COD002",
+      "shipping_address": {
+        "line1": "12 MG Road, Koramangala",
+        "city": "Bengaluru",
+        "state": "Karnataka",
+        "pincode": "560034"
+      },
+      "items": [
+        {
+          "line_id": 1,
+          "product_id": "PROD-SHOES-033",
+          "name": "Nike Running Shoes",
+          "quantity": 1,
+          "unit_price": 8999.0,
+          "status": "active"
+        }
+      ],
+      "total_amount": 8999.0,
+      "payment_method": "COD",
+      "_note": "COD delivered, value ₹8,999 — return/refund needs electronic method (UPI/card), cannot use 'original'"
+    },
+
+    {
+      "order_id": "ORD-55003",
+      "customer_id": "CUST-001",
+      "status": "shipped",
+      "created_at": "2026-05-22T11:30:00Z",
+      "estimated_delivery": "2026-05-29",
+      "tracking_number": "TRACK-COD003",
+      "shipping_address": {
+        "line1": "12 MG Road, Koramangala",
+        "city": "Bengaluru",
+        "state": "Karnataka",
+        "pincode": "560034"
+      },
+      "items": [
+        {
+          "line_id": 1,
+          "product_id": "PROD-WATCH-022",
+          "name": "Fastrack Analog Watch",
+          "quantity": 1,
+          "unit_price": 2499.0,
+          "status": "active"
+        }
+      ],
+      "total_amount": 2499.0,
+      "payment_method": "COD",
+      "_note": "COD shipped — cannot cancel, must wait for delivery then request return"
+    },
+
+    {
+      "order_id": "ORD-55004",
+      "customer_id": "CUST-002",
+      "status": "delivered",
+      "created_at": "2026-05-05T08:00:00Z",
+      "estimated_delivery": "2026-05-12",
+      "tracking_number": "TRACK-COD004",
+      "shipping_address": {
+        "line1": "Flat 3B, Sunshine Apartments, Bandra West",
+        "city": "Mumbai",
+        "state": "Maharashtra",
+        "pincode": "400050"
+      },
+      "items": [
+        {
+          "line_id": 1,
+          "product_id": "PROD-TV-067",
+          "name": "Sony 55-inch 4K OLED TV",
+          "quantity": 1,
+          "unit_price": 82000.0,
+          "status": "active"
+        }
+      ],
+      "total_amount": 82000.0,
+      "payment_method": "COD",
+      "_note": "COD delivered, value ₹82,000 — high-value, requires escalation + electronic refund method"
+    },
+
+    {
+      "order_id": "ORD-55005",
+      "customer_id": "CUST-003",
+      "status": "placed",
+      "created_at": "2026-05-26T14:00:00Z",
+      "estimated_delivery": "2026-06-02",
+      "tracking_number": null,
+      "shipping_address": {
+        "line1": "22 Anna Salai, Teynampet",
+        "city": "Chennai",
+        "state": "Tamil Nadu",
+        "pincode": "600018"
+      },
+      "items": [
+        {
+          "line_id": 1,
+          "product_id": "PROD-KURTA-015",
+          "name": "Cotton Kurta (Blue)",
+          "quantity": 2,
+          "unit_price": 799.0,
+          "status": "active"
+        },
+        {
+          "line_id": 2,
+          "product_id": "PROD-DUPATTA-008",
+          "name": "Silk Dupatta",
+          "quantity": 1,
+          "unit_price": 1299.0,
+          "status": "active"
+        },
+        {
+          "line_id": 3,
+          "product_id": "PROD-JUTTIS-040",
+          "name": "Embroidered Juttis",
+          "quantity": 1,
+          "unit_price": 1499.0,
+          "status": "active"
+        }
+      ],
+      "total_amount": 4396.0,
+      "payment_method": "COD",
+      "_note": "COD placed, multi-item — partial cancel works, no refund needed (not yet paid)"
     }
   ]
 }

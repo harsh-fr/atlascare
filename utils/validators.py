@@ -56,7 +56,7 @@ def validate_order_id(order_id: Any) -> str:
     Validate and return a normalised order ID.
 
     Valid format: ORD-XXXXX  (5 digits)
-    Example     : ORD-78321
+    Example     : ORD-99999
 
     Raises ValueError on invalid input.
     """
@@ -68,7 +68,7 @@ def validate_order_id(order_id: Any) -> str:
     if not _ORDER_ID_RE.match(normalised):
         raise ValueError(
             f"Invalid order_id '{order_id}'. "
-            "Expected format: ORD-XXXXX (e.g. ORD-78321)."
+            "Expected format: ORD-XXXXX (e.g. ORD-99999)."
         )
     return normalised
 

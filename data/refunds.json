@@ -1,24 +1,44 @@
 {
   "refunds": [
     {
-      "refund_id": "REF-78400-CCB06C05",
+      "refund_id": "REF-78400-E1D2A510",
       "order_id": "ORD-78400",
       "customer_id": "CUST-001",
       "amount_inr": 24999.0,
       "method": "original",
       "status": "initiated",
       "sla_days": 5,
-      "created_at": "2026-05-24T07:09:39.688556+00:00"
+      "created_at": "2026-05-26T05:14:43.914261+00:00"
     },
     {
-      "refund_id": "REF-88001-D5C26E0D",
+      "refund_id": "REF-78322-D03E5DB6",
+      "order_id": "ORD-78322",
+      "customer_id": "CUST-001",
+      "amount_inr": 1500.0,
+      "method": "original",
+      "status": "initiated",
+      "sla_days": 5,
+      "created_at": "2026-05-26T05:16:44.936384+00:00"
+    },
+    {
+      "refund_id": "REF-78401-79627C6B",
+      "order_id": "ORD-78401",
+      "customer_id": "CUST-001",
+      "amount_inr": 25000.0,
+      "method": "UPI",
+      "status": "initiated",
+      "sla_days": 5,
+      "created_at": "2026-05-26T05:20:33.745605+00:00"
+    },
+    {
+      "refund_id": "REF-88001-E6F337EC",
       "order_id": "ORD-88001",
       "customer_id": "CUST-003",
       "amount_inr": 4500.0,
       "method": "original",
       "status": "initiated",
       "sla_days": 5,
-      "created_at": "2026-05-24T13:09:54.843045+00:00"
+      "created_at": "2026-05-26T18:44:50.113733+00:00"
     }
   ]
 }

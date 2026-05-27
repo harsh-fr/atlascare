@@ -5,9 +5,9 @@ Deterministic policy enforcement layer.
 
 Responsibility
 --------------
-  Pre-check  : runs BEFORE the LLM/Planner sees the message.
+  Pre-check  : runs BEFORE the LLM sees the message.
                Catches obvious policy violations early.
-  Post-check : runs AFTER the Executor completes.
+  Post-check : runs AFTER tool execution completes.
                Verifies no autonomous payment was made when it
                shouldn't have been (e.g. escalation cases).
 
@@ -27,10 +27,7 @@ import logging
 import os
 import re
 from dataclasses import dataclass
-from typing import TYPE_CHECKING
 
-if TYPE_CHECKING:
-    from agent.executor import ExecutionResult
 from observability.tracer import Tracer
 
 logger = logging.getLogger(__name__)
@@ -64,7 +61,7 @@ class GuardrailVerdict:
 
     Attributes
     ----------
-    blocked      : True  → Orchestrator must halt and return user_message.
+    blocked      : True  → Pipeline must halt and return user_message.
                    False → pipeline continues.
     reason       : internal audit label (never shown to user).
     user_message : polite holding message shown to the customer when blocked.
@@ -107,7 +104,7 @@ class Guardrails:
     """
 
     # ------------------------------------------------------------------
-    # Pre-execution check (called before Planner)
+    # Pre-execution check (called before LLM)
     # ------------------------------------------------------------------
     def pre_check(
         self,
@@ -150,35 +147,26 @@ class Guardrails:
         return GuardrailVerdict.allow()
 
     # ------------------------------------------------------------------
-    # Post-execution check (called after Executor)
+    # Post-execution check (called after tool execution)
     # ------------------------------------------------------------------
     def post_check(
         self,
-        execution_result: "ExecutionResult",
+        execution_summary: list[dict],
         tracer: Tracer,
     ) -> GuardrailVerdict:
         """
         Verify execution outcomes comply with policy.
 
-        Critical invariant enforced here:
-          If an escalation case was created, NO payment step should
-          have succeeded. This is the final safety net against a race
-          condition where the Executor might process a refund AND
-          create a case in the same plan.
+        Critical invariant: if an escalation succeeded, no payment
+        step should also have succeeded in the same turn.
 
         Returns
         -------
         GuardrailVerdict — blocked=False means pipeline may continue.
         """
-        from agent.executor import ExecutionResult
-        from agent.planner import ActionType
-
-        rules = [
-            lambda er: self._rule_no_payment_on_escalation(er),
-        ]
-
+        rules = [self._rule_no_payment_on_escalation]
         for rule in rules:
-            verdict = rule(execution_result)
+            verdict = rule(execution_summary)
             if verdict.blocked:
                 tracer.record_guardrail_trigger(
                     rule_id=verdict.rule_id,
@@ -191,7 +179,6 @@ class Guardrails:
                     tracer.trace_id,
                 )
                 return verdict
-
         return GuardrailVerdict.allow()
 
     # ------------------------------------------------------------------
@@ -212,7 +199,7 @@ class Guardrails:
         This rule fires BEFORE the LLM so that the threshold decision
         is never delegated to prompt logic.
 
-        Note: The Executor also enforces this via the PaymentTool's own
+        Note: PaymentTool also enforces this via its own
         guard — defence in depth.
         """
         amounts = _extract_amounts(message)
@@ -292,25 +279,24 @@ class Guardrails:
     # ------------------------------------------------------------------
     def _rule_no_payment_on_escalation(
         self,
-        execution_result: "ExecutionResult",
+        execution_summary: list[dict],
     ) -> GuardrailVerdict:
         """
         RULE: GR-004 (CRITICAL)
-        If the execution result contains both a successful PROCESS_REFUND
-        step AND an escalation case, something has gone wrong.
-        This should never happen under correct operation — if it does,
-        treat it as a critical policy violation.
+        If a refund was processed AND an escalation case was created in
+        the same turn, something has gone wrong — block and alert.
 
         Defence-in-depth: PaymentTool also checks the threshold, and
         pre-guardrail GR-001 fires before the LLM. This is the final net.
         """
-        from agent.planner import ActionType
-
         payment_succeeded = any(
-            r.action == ActionType.PROCESS_REFUND and r.success
-            for r in execution_result.step_results
+            e["tool"] == "process_refund" and e["success"]
+            for e in execution_summary
         )
-        escalation_exists = execution_result.escalated
+        escalation_exists = any(
+            e["tool"] == "escalate" and e["success"]
+            for e in execution_summary
+        )
 
         if payment_succeeded and escalation_exists:
             return GuardrailVerdict.block(

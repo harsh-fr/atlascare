@@ -15,7 +15,10 @@
         "ORD-78400",
         "ORD-78401",
         "ORD-78402",
-        "ORD-78500"
+        "ORD-78500",
+        "ORD-55001",
+        "ORD-55002",
+        "ORD-55003"
       ],
       "preferred_refund_method": "HDFC_CREDIT",
       "addresses": [
@@ -43,7 +46,8 @@
       "tier": "platinum",
       "order_ids": [
         "ORD-99001",
-        "ORD-99002"
+        "ORD-99002",
+        "ORD-55004"
       ],
       "preferred_refund_method": "UPI",
       "addresses": [
@@ -70,7 +74,8 @@
       "phone": "+91-9988776655",
       "tier": "standard",
       "order_ids": [
-        "ORD-88001"
+        "ORD-88001",
+        "ORD-55005"
       ],
       "preferred_refund_method": "original",
       "addresses": [
@@ -121,15 +126,15 @@
   ],
   "cases": [
     {
-      "case_id": "CASE-EXIST1",
+      "case_id": "CASE-18E2CF",
       "customer_id": "CUST-001",
-      "order_id": "ORD-78323",
-      "status": "resolved",
-      "priority": "medium",
-      "description": "[ESCALATION CASE - AtlasCare]\nCustomer  : CUST-001\nOrder     : ORD-78323\nPriority  : MEDIUM\nAmount    : N/A\nReason    : Wrong size delivered.\nAction    : Requires specialist review.\nTrace ID  : trc-historical01",
+      "order_id": "ORD-78401",
+      "status": "open",
+      "priority": "high",
+      "description": "[ESCALATION CASE — AtlasCare]\nCustomer  : CUST-001\nOrder     : ORD-78401\nPriority  : HIGH\nAmount    : N/A\nReason    : shipping address update issue\nAction    : Requires specialist review. Please contact the customer to resolve their query.\nTrace ID  : trc-a03978993445\nCreated   : 2026-05-26 18:51 UTC",
       "amount_inr": null,
-      "trace_id": "trc-historical01",
-      "created_at": "2026-05-09T00:58:46.488957+00:00"
+      "trace_id": "trc-a03978993445",
+      "created_at": "2026-05-26T18:51:18.271792+00:00"
     }
   ]
 }

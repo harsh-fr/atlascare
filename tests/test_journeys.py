@@ -7,9 +7,11 @@ End-to-end journey tests for J1, J2, and J3.
 import json
 import time
 import pytest
-from unittest.mock import patch, AsyncMock
+from unittest.mock import patch, AsyncMock, MagicMock
 from fastapi.testclient import TestClient
-from tests.conftest import J1_PLAN, J2_PLAN, J3_PLAN, _mock_plan_response, make_llm_mock
+from tests.conftest import (
+    make_tool_mock, make_multi_tool_mock, make_done_mock, make_text_mock,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -27,12 +29,41 @@ def _statuses(body): return [tc["status"] for tc in body["trace"]["tool_calls"]]
 def _tools(body):    return [tc["tool"]   for tc in body["trace"]["tool_calls"]]
 
 
-def _run(client, message, plan, resp_text="Done.", session_id="sess-cust001"):
-    """Post a query with both LLM calls mocked. Returns response body."""
-    mock = make_llm_mock(plan, resp_text)
-    with patch("agent.planner.Planner._call_llm", new=mock):
-        with patch("agent.response_builder.ResponseBuilder._call_llm", new=mock):
-            return _post(client, message, session_id)
+def _run(client, message, groq_responses, session_id="sess-cust001"):
+    """Post a query with the Groq client mocked. Returns response body."""
+    mock_client = MagicMock()
+    mock_client.chat.completions.create = AsyncMock(side_effect=groq_responses)
+    with patch("agent.graph._groq_client", mock_client):
+        return _post(client, message, session_id)
+
+
+def _j1_responses(text="Your order ORD-78321 is currently being processed."):
+    return [
+        make_tool_mock("get_order", {"order_id": "ORD-78321"}),
+        make_text_mock(text),
+    ]
+
+
+def _j2_responses(text="Done."):
+    return [
+        make_multi_tool_mock([
+            ("cancel_item",    {"order_id": "ORD-78321", "line_id": 2}),
+            ("process_refund", {"order_id": "ORD-78321", "amount_inr": 1500.0, "method": "HDFC_CREDIT"}),
+            ("update_address", {"order_id": "ORD-78321", "address_label": "office"}),
+        ]),
+        make_text_mock(text),
+    ]
+
+
+def _j3_responses():
+    # Escalation: deterministic response — no responder LLM call
+    return [
+        make_tool_mock("escalate", {
+            "order_id":   "ORD-78500",
+            "reason":     "Customer requesting full refund for damaged laptop. Exceeds threshold.",
+            "amount_inr": 42000.0,
+        }),
+    ]
 
 
 # ===========================================================================
@@ -42,37 +73,37 @@ def _run(client, message, plan, resp_text="Done.", session_id="sess-cust001"):
 class TestJ1OrderTracking:
 
     def test_j1_returns_200(self, client):
-        body = _run(client, "Where is my order ORD-78321?", J1_PLAN)
+        body = _run(client, "Where is my order ORD-78321?", _j1_responses())
         assert body["response"]
         assert body["trace"]["trace_id"].startswith("trc-")
 
     def test_j1_latency_under_3_seconds(self, client):
-        mock = make_llm_mock(J1_PLAN, "Your order is being processed.")
-        with patch("agent.planner.Planner._call_llm", new=mock):
-            with patch("agent.response_builder.ResponseBuilder._call_llm", new=mock):
-                t0 = time.monotonic()
-                _post(client, "Where is my order ORD-78321?")
-                elapsed_ms = (time.monotonic() - t0) * 1000
+        mock_client = MagicMock()
+        mock_client.chat.completions.create = AsyncMock(side_effect=_j1_responses("Processing."))
+        with patch("agent.graph._groq_client", mock_client):
+            t0 = time.monotonic()
+            _post(client, "Where is my order ORD-78321?")
+            elapsed_ms = (time.monotonic() - t0) * 1000
         assert elapsed_ms < 3000, f"J1 latency {elapsed_ms:.0f}ms exceeds 3000ms SLA"
 
     def test_j1_exactly_one_oms_call(self, client):
-        body = _run(client, "Where is my order ORD-78321?", J1_PLAN)
+        body = _run(client, "Where is my order ORD-78321?", _j1_responses())
         oms_calls = [tc for tc in body["trace"]["tool_calls"] if tc["action"] == "get_order"]
-        assert len(oms_calls) == 1, f"Expected exactly 1 OMS call, got {len(oms_calls)}: {oms_calls}"
+        assert len(oms_calls) == 1
 
     def test_j1_no_crm_or_payment_calls(self, client):
-        body = _run(client, "Where is my order ORD-78321?", J1_PLAN)
+        body = _run(client, "Where is my order ORD-78321?", _j1_responses())
         acts = _actions(body)
         assert "process_refund"  not in acts
         assert "create_crm_case" not in acts
         assert "escalate"        not in acts
 
     def test_j1_no_escalation(self, client):
-        body = _run(client, "Where is my order ORD-78321?", J1_PLAN)
+        body = _run(client, "Where is my order ORD-78321?", _j1_responses())
         assert "escalate" not in _actions(body)
 
     def test_j1_trace_fields_present(self, client):
-        body = _run(client, "Where is my order ORD-78321?", J1_PLAN)
+        body  = _run(client, "Where is my order ORD-78321?", _j1_responses())
         trace = body["trace"]
         assert "trace_id"   in trace
         assert "session_id" in trace
@@ -83,17 +114,19 @@ class TestJ1OrderTracking:
         assert trace["latency_ms"] > 0
 
     def test_j1_shipped_order_returns_tracking(self, client):
-        plan = _mock_plan_response("order_tracking",
-            [{"action": "get_order", "params": {"order_id": "ORD-78322"}, "depends_on": []}])
-        body = _run(client, "Where is my order ORD-78322?", plan, "Shipped with TRACK-7X9K2M.")
+        responses = [
+            make_tool_mock("get_order", {"order_id": "ORD-78322"}),
+            make_text_mock("Your order is shipped with tracking TRACK-7X9K2M."),
+        ]
+        body = _run(client, "Where is my order ORD-78322?", responses)
         assert "success" in _statuses(body)
 
     def test_j1_response_is_non_empty(self, client):
-        body = _run(client, "Where is my order ORD-78321?", J1_PLAN)
+        body = _run(client, "Where is my order ORD-78321?", _j1_responses())
         assert len(body["response"]) > 10
 
     def test_j1_response_not_truncated(self, client):
-        body = _run(client, "Where is my order ORD-78321?", J1_PLAN)
+        body = _run(client, "Where is my order ORD-78321?", _j1_responses())
         assert body["response"].strip()[-1] in ".?!*)"
 
 
@@ -107,57 +140,52 @@ class TestJ2CompoundRequest:
         body = _run(
             client,
             "Cancel item 2 from ORD-78321, refund to HDFC card, ship rest to office.",
-            J2_PLAN,
+            _j2_responses(),
         )
         acts = _actions(body)
-        assert "cancel_item"    in acts, f"cancel_item not in {acts}"
-        assert "process_refund" in acts, f"process_refund not in {acts}"
-        assert "update_address" in acts, f"update_address not in {acts}"
+        assert "cancel_item"    in acts
+        assert "process_refund" in acts
+        assert "update_address" in acts
 
     def test_j2_cancel_step_recorded_as_success(self, client):
-        body = _run(client, "Cancel item 2 from ORD-78321.", J2_PLAN)
-        cc = [tc for tc in body["trace"]["tool_calls"] if tc["action"] == "cancel_item"]
+        body = _run(client, "Cancel item 2 from ORD-78321.", _j2_responses())
+        cc   = [tc for tc in body["trace"]["tool_calls"] if tc["action"] == "cancel_item"]
         assert len(cc) >= 1
         assert cc[0]["status"] == "success"
 
     def test_j2_refund_step_recorded_as_success(self, client):
-        body = _run(client, "Cancel item 2 from ORD-78321 and refund.", J2_PLAN)
-        rc = [tc for tc in body["trace"]["tool_calls"] if tc["action"] == "process_refund"]
+        body = _run(client, "Cancel item 2 from ORD-78321 and refund.", _j2_responses())
+        rc   = [tc for tc in body["trace"]["tool_calls"] if tc["action"] == "process_refund"]
         assert len(rc) >= 1
         assert rc[0]["status"] == "success"
 
     def test_j2_address_update_step_recorded(self, client):
-        body = _run(client, "Ship remaining items to office for ORD-78321.", J2_PLAN)
-        ac = [tc for tc in body["trace"]["tool_calls"] if tc["action"] == "update_address"]
+        body = _run(client, "Ship remaining items to office for ORD-78321.", _j2_responses())
+        ac   = [tc for tc in body["trace"]["tool_calls"] if tc["action"] == "update_address"]
         assert len(ac) >= 1
 
     def test_j2_failed_step_recorded_not_hidden(self, client):
-        plan = _mock_plan_response("compound", [
-            {"action": "cancel_item",
-             "params": {"order_id": "ORD-78323", "line_id": 1},
-             "depends_on": []},
-        ])
-        body = _run(client, "Cancel item 1 from ORD-78323.", plan)
+        responses = [
+            make_tool_mock("cancel_item", {"order_id": "ORD-78323", "line_id": 1}),
+            make_text_mock("Sorry, that order cannot be cancelled as it is delivered."),
+        ]
+        body = _run(client, "Cancel item 1 from ORD-78323.", responses)
         cc = [tc for tc in body["trace"]["tool_calls"] if tc["action"] == "cancel_item"]
         assert len(cc) >= 1
         assert cc[0]["status"] == "error"
 
-    def test_j2_dependent_step_skipped_on_cancel_failure(self, client):
-        plan = _mock_plan_response("compound", [
-            {"action": "cancel_item",
-             "params": {"order_id": "ORD-78323", "line_id": 1},
-             "depends_on": []},
-            {"action": "process_refund",
-             "params": {"order_id": "ORD-78323", "amount_inr": 55000.0, "method": "HDFC_CREDIT"},
-             "depends_on": [0]},
-        ])
-        body = _run(client, "Cancel and refund ORD-78323.", plan)
-        rc = [tc for tc in body["trace"]["tool_calls"] if tc["action"] == "process_refund"]
-        if rc:
-            assert rc[0]["status"] != "success"
+    def test_j2_cancel_failure_visible_in_trace(self, client):
+        """Cancelled-order item records error status, not swallowed."""
+        responses = [
+            make_tool_mock("cancel_item", {"order_id": "ORD-78323", "line_id": 1}),
+            make_text_mock("Order ORD-78323 is delivered and cannot be cancelled."),
+        ]
+        body = _run(client, "Cancel item 1 from ORD-78323.", responses)
+        cc = [tc for tc in body["trace"]["tool_calls"] if tc["action"] == "cancel_item"]
+        assert cc and cc[0]["status"] == "error"
 
     def test_j2_returns_200(self, client):
-        body = _run(client, "Cancel item 2 from ORD-78321.", J2_PLAN)
+        body = _run(client, "Cancel item 2 from ORD-78321.", _j2_responses())
         assert body["response"]
 
 
@@ -168,26 +196,12 @@ class TestJ2CompoundRequest:
 class TestJ3Escalation:
 
     def _run_j3(self, client, message="Laptop arrived damaged, order ORD-78500."):
-        """
-        Run a J3 escalation request with guardrail GR-001 bypassed.
-
-        GR-001 fires pre-LLM when it detects a refund amount > Rs.25,000
-        in the message. For J3 tests, the plan itself contains the amount
-        (42000) but the natural language message does NOT mention the amount
-        — so GR-001 does not fire and the escalate step runs normally.
-
-        Alternatively we patch guardrails.pre_check to allow for tests
-        that do include the amount.
-        """
         from agent.guardrails import GuardrailVerdict
-        mock = make_llm_mock(J3_PLAN, "Your case has been escalated.")
-        with patch("agent.planner.Planner._call_llm", new=mock):
-            with patch("agent.response_builder.ResponseBuilder._call_llm", new=mock):
-                with patch(
-                    "agent.guardrails.Guardrails.pre_check",
-                    return_value=GuardrailVerdict.allow(),
-                ):
-                    return _post(client, message)
+        with patch(
+            "agent.guardrails.Guardrails.pre_check",
+            return_value=GuardrailVerdict.allow(),
+        ):
+            return _run(client, message, _j3_responses())
 
     def test_j3_payment_tool_never_called(self, client):
         body = self._run_j3(client)
@@ -199,20 +213,18 @@ class TestJ3Escalation:
     def test_j3_crm_case_created(self, client, data_dir):
         self._run_j3(client)
         crm = json.loads((data_dir / "crm_cases.json").read_text())
-        assert len(crm["cases"]) >= 1, "No CRM case was created."
+        assert len(crm["cases"]) >= 1
 
     def test_j3_case_has_trace_id(self, client, data_dir):
         body = self._run_j3(client)
         tid  = body["trace"]["trace_id"]
         crm  = json.loads((data_dir / "crm_cases.json").read_text())
-        assert tid in [c.get("trace_id") for c in crm["cases"]], (
-            f"trace_id '{tid}' not found in cases."
-        )
+        assert tid in [c.get("trace_id") for c in crm["cases"]]
 
     def test_j3_case_has_structured_handoff(self, client, data_dir):
         self._run_j3(client)
         crm  = json.loads((data_dir / "crm_cases.json").read_text())
-        assert crm["cases"], "No case created."
+        assert crm["cases"]
         desc = crm["cases"][0]["description"]
         assert "[ESCALATION CASE" in desc
         assert "CUST-001"         in desc
@@ -232,7 +244,6 @@ class TestJ3Escalation:
         assert any(k in r for k in ["case", "specialist", "team", "24", "escalat"])
 
     def test_j3_guardrail_pre_check_blocks_high_value(self, client):
-        # No LLM mock needed — GR-001 fires before planner on amount mention
         body = _post(client, "Please refund Rs.42000 for my damaged laptop.")
         guardrail_calls = [tc for tc in body["trace"]["tool_calls"]
                            if tc["tool"] == "guardrails"]
@@ -244,16 +255,11 @@ class TestJ3Escalation:
         self._run_j3(client)
         crm     = json.loads((data_dir / "crm_cases.json").read_text())
         case_id = crm["cases"][0]["case_id"]
-        assert re.match(r"^CASE-[A-Z0-9]{6}$", case_id), (
-            f"case_id '{case_id}' does not match schema pattern."
-        )
+        assert re.match(r"^CASE-[A-Z0-9]{6}$", case_id)
 
     def test_j3_escalation_in_trace(self, client):
         body = self._run_j3(client)
-        # The escalate action is recorded with tool=action.value="escalate"
-        assert "escalate" in _actions(body), (
-            f"Expected 'escalate' in actions, got: {_actions(body)}"
-        )
+        assert "escalate" in _actions(body)
 
     def test_j3_returns_200(self, client):
         body = self._run_j3(client)

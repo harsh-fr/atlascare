@@ -34,7 +34,6 @@ Coverage
 """
 
 import pytest
-from unittest.mock import patch, MagicMock
 
 from agent.guardrails import Guardrails, GuardrailVerdict, _extract_amounts
 from observability.tracer import Tracer
@@ -48,31 +47,25 @@ def _make_tracer(session_id: str = "sess-test") -> Tracer:
     return Tracer(session_id=session_id)
 
 
-def _make_execution_result(
+def _make_execution_summary(
     payment_success: bool = False,
     escalated: bool = False,
-) -> MagicMock:
-    """Build a minimal ExecutionResult mock."""
-    from agent.planner import ActionType
-    from agent.executor import StepResult
-
-    mock = MagicMock()
-    mock.escalated = escalated
-
-    step_results = []
+) -> list[dict]:
+    """Build an execution_summary list matching graph.py format."""
+    summary = []
     if payment_success:
-        sr = MagicMock()
-        sr.action = ActionType.PROCESS_REFUND
-        sr.success = True
-        step_results.append(sr)
+        summary.append({
+            "tool": "process_refund", "tool_call_id": "call_refund_01",
+            "success": True, "data": {"refund": {"status": "initiated"}},
+            "error": "", "escalated": False,
+        })
     if escalated:
-        sr2 = MagicMock()
-        sr2.action = ActionType.ESCALATE
-        sr2.success = True
-        step_results.append(sr2)
-
-    mock.step_results = step_results
-    return mock
+        summary.append({
+            "tool": "escalate", "tool_call_id": "call_escalate_01",
+            "success": True, "data": {"case_id": "CASE-TEST01", "escalated": True},
+            "error": "", "escalated": True,
+        })
+    return summary
 
 
 # ---------------------------------------------------------------------------
@@ -285,37 +278,37 @@ class TestPostCheck:
     def test_gr004_payment_and_escalation_blocks(self, guardrails):
         """CRITICAL: payment success + escalation = GR-004 block."""
         tracer  = _make_tracer()
-        result  = _make_execution_result(payment_success=True, escalated=True)
-        verdict = guardrails.post_check(execution_result=result, tracer=tracer)
+        result  = _make_execution_summary(payment_success=True, escalated=True)
+        verdict = guardrails.post_check(execution_summary=result, tracer=tracer)
         assert verdict.blocked is True
         assert verdict.rule_id == "GR-004"
 
     def test_gr004_payment_only_allows(self, guardrails):
         """Payment without escalation is fine."""
         tracer  = _make_tracer()
-        result  = _make_execution_result(payment_success=True, escalated=False)
-        verdict = guardrails.post_check(execution_result=result, tracer=tracer)
+        result  = _make_execution_summary(payment_success=True, escalated=False)
+        verdict = guardrails.post_check(execution_summary=result, tracer=tracer)
         assert verdict.blocked is False
 
     def test_gr004_escalation_only_allows(self, guardrails):
         """Escalation without payment is fine."""
         tracer  = _make_tracer()
-        result  = _make_execution_result(payment_success=False, escalated=True)
-        verdict = guardrails.post_check(execution_result=result, tracer=tracer)
+        result  = _make_execution_summary(payment_success=False, escalated=True)
+        verdict = guardrails.post_check(execution_summary=result, tracer=tracer)
         assert verdict.blocked is False
 
     def test_gr004_neither_allows(self, guardrails):
         """Neither payment nor escalation → allow."""
         tracer  = _make_tracer()
-        result  = _make_execution_result(payment_success=False, escalated=False)
-        verdict = guardrails.post_check(execution_result=result, tracer=tracer)
+        result  = _make_execution_summary(payment_success=False, escalated=False)
+        verdict = guardrails.post_check(execution_summary=result, tracer=tracer)
         assert verdict.blocked is False
 
     def test_gr004_tracer_records_critical_trigger(self, guardrails):
         """GR-004 trigger must be recorded as critical in tracer."""
         tracer = _make_tracer()
-        result = _make_execution_result(payment_success=True, escalated=True)
-        guardrails.post_check(execution_result=result, tracer=tracer)
+        result = _make_execution_summary(payment_success=True, escalated=True)
+        guardrails.post_check(execution_summary=result, tracer=tracer)
         assert tracer.had_guardrail_trigger()
         events = tracer.get_guardrail_events()
         assert any(e["rule_id"] == "GR-004" for e in events)

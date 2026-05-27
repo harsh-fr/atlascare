@@ -1,0 +1,159 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "crm_cases.json",
+  "description": "CRM customer profiles and existing case history. Generate synthetic records conforming to this schema.",
+  "type": "object",
+  "required": ["customers", "cases"],
+  "properties": {
+    "customers": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["customer_id", "name", "email", "phone", "tier", "order_ids"],
+        "properties": {
+          "customer_id": {
+            "type": "string",
+            "pattern": "^CUST-[0-9]{3}$",
+            "example": "CUST-001"
+          },
+          "name": {
+            "type": "string",
+            "example": "Priya Sharma"
+          },
+          "email": {
+            "type": "string",
+            "format": "email",
+            "example": "priya.sharma@email.com"
+          },
+          "phone": {
+            "type": "string",
+            "example": "+91-9876543210"
+          },
+          "tier": {
+            "type": "string",
+            "enum": ["standard", "silver", "gold", "platinum"],
+            "description": "Customer loyalty tier",
+            "example": "gold"
+          },
+          "order_ids": {
+            "type": "array",
+            "description": "References to this customer's orders in orders.json",
+            "items": { "type": "string" },
+            "example": ["ORD-78321", "ORD-78450"]
+          },
+          "preferred_refund_method": {
+            "type": "string",
+            "enum": ["HDFC_CREDIT", "ICICI_DEBIT", "SBI_NETBANKING", "UPI", "original"],
+            "example": "HDFC_CREDIT"
+          },
+          "addresses": {
+            "type": "array",
+            "description": "Saved addresses (home, office etc.)",
+            "items": {
+              "type": "object",
+              "required": ["label", "line1", "city", "state", "pincode"],
+              "properties": {
+                "label":   { "type": "string", "example": "office" },
+                "line1":   { "type": "string", "example": "4th Floor, Prestige Tower, Outer Ring Road" },
+                "city":    { "type": "string", "example": "Bengaluru" },
+                "state":   { "type": "string", "example": "Karnataka" },
+                "pincode": { "type": "string", "example": "560103" }
+              }
+            }
+          }
+        }
+      }
+    },
+    "cases": {
+      "type": "array",
+      "description": "Existing escalation cases. New cases are created at runtime via POST /cases.",
+      "items": {
+        "type": "object",
+        "required": ["case_id", "customer_id", "order_id", "status", "priority", "description", "created_at"],
+        "properties": {
+          "case_id": {
+            "type": "string",
+            "pattern": "^CASE-[A-Z0-9]{6}$",
+            "example": "CASE-A1B2C3"
+          },
+          "customer_id": {
+            "type": "string",
+            "example": "CUST-001"
+          },
+          "order_id": {
+            "type": "string",
+            "example": "ORD-78321"
+          },
+          "status": {
+            "type": "string",
+            "enum": ["open", "in_progress", "resolved", "closed"],
+            "example": "open"
+          },
+          "priority": {
+            "type": "string",
+            "enum": ["low", "medium", "high"],
+            "example": "high"
+          },
+          "description": {
+            "type": "string",
+            "description": "Structured handoff summary for the human agent",
+            "example": "Customer requesting refund of Rs.42000 for damaged laptop. Exceeds auto-refund threshold. Requires specialist review."
+          },
+          "amount_inr": {
+            "type": ["number", "null"],
+            "description": "Refund amount in INR if case involves a refund",
+            "example": 42000.00
+          },
+          "trace_id": {
+            "type": ["string", "null"],
+            "description": "Agent trace_id from the interaction that created this case",
+            "example": "trc-a1b2c3d4"
+          },
+          "created_at": {
+            "type": "string",
+            "format": "date-time",
+            "example": "2025-05-10T14:22:00Z"
+          }
+        }
+      }
+    }
+  },
+  "_sample_records": {
+    "customer": {
+      "customer_id": "CUST-001",
+      "name":        "Priya Sharma",
+      "email":       "priya.sharma@email.com",
+      "phone":       "+91-9876543210",
+      "tier":        "gold",
+      "order_ids":   ["ORD-78321", "ORD-78450"],
+      "preferred_refund_method": "HDFC_CREDIT",
+      "addresses": [
+        {
+          "label":   "home",
+          "line1":   "12 MG Road, Koramangala",
+          "city":    "Bengaluru",
+          "state":   "Karnataka",
+          "pincode": "560034"
+        },
+        {
+          "label":   "office",
+          "line1":   "4th Floor, Prestige Tower, Outer Ring Road",
+          "city":    "Bengaluru",
+          "state":   "Karnataka",
+          "pincode": "560103"
+        }
+      ]
+    },
+    "case": {
+      "case_id":     "CASE-A1B2C3",
+      "customer_id": "CUST-001",
+      "order_id":    "ORD-78321",
+      "status":      "open",
+      "priority":    "high",
+      "description": "Customer requesting refund of Rs.42000 for damaged laptop. Exceeds auto-refund threshold. Requires specialist review.",
+      "amount_inr":  42000.00,
+      "trace_id":    "trc-a1b2c3d4",
+      "created_at":  "2025-05-10T14:22:00Z"
+    }
+  }
+}

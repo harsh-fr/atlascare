@@ -22,43 +22,47 @@ HTTP Request (POST /query)
                     │
                     ▼
 ┌─────────────────────────────────────────────────────┐
-│               agent/orchestrator.py                 │
-│  Pipeline coordinator — wires all components        │
-│  6-step flow: session → pre-guard → plan →          │
-│               execute → post-guard → respond        │
-└──┬────────────┬──────────────┬────────────┬─────────┘
-   │            │              │            │
-   ▼            ▼              ▼            ▼
-planner.py  guardrails.py  executor.py  response_builder.py
-(LLM)       (Code rules)   (Dispatch)   (LLM phrasing)
-                                │
-              ┌─────────────────┼─────────────────┐
-              ▼                 ▼                 ▼
-         oms_tool.py      crm_tool.py      payment_tool.py
-         kb_tool.py
-              │
-    ┌─────────┼─────────┐
-    ▼         ▼         ▼
-order_repo  crm_repo  payment_repo
-kb_repo
+│               agent/graph.py  (LangGraph)           │
+│  Compiled StateGraph — wires all pipeline nodes     │
+│                                                     │
+│  pre_guardrail → tool_agent → tool_executor         │
+│       └─(blocked)→ END         │                   │
+│                                ▼                   │
+│                         post_guardrail              │
+│                       └─(blocked)→ END             │
+│                                │                   │
+│                                ▼                   │
+│                           responder → END           │
+└──────────────────────┬──────────────────────────────┘
+                       │  tool_executor calls
+          ┌────────────┼────────────┬────────────┐
+          ▼            ▼            ▼            ▼
+     oms_tool.py  crm_tool.py  payment_tool.py  kb_tool.py
+          │
+    ┌─────┼─────┐
+    ▼     ▼     ▼
+order_  crm_  payment_  kb_
+repo    repo   repo     repo
     │
   data/*.json  (JSON-backed, atomic writes)
 ```
 
 ---
 
-## 3. Request Pipeline (6 Steps)
+## 3. Request Pipeline
 
-| Step | Component | Who does it | What happens |
-|------|-----------|-------------|--------------|
-| 1 | SessionStore | Code | `session_id` → `customer_id` resolution |
-| 2 | Guardrails.pre_check | Code | Policy rules before LLM sees message |
-| 3 | Orchestrator — greeting branch | **Llama 3.1 8B Instant** | Pure greetings routed directly to conversational reply, skip planning |
-| 4 | Planner | **Llama 3.3 70B Versatile** | Intent extraction → typed ActionPlan (JSON) |
-| 5 | Executor | Code | Tool dispatch with ownership validation |
-| 6 | Guardrails.post_check | Code | Verify execution outcomes comply |
-| 7 | ResponseBuilder — fast paths | Code | Deterministic templates for order tracking, escalation, not-found |
-| 8 | ResponseBuilder — LLM path | **Llama 3.1 8B Instant** | Ground verified data → natural reply for compound/refund/KB queries |
+| Step | Node | Model | What happens |
+|------|------|-------|--------------|
+| 1 | main.py | — | `session_id` → `customer_id` via SessionStore |
+| 2 | `pre_guardrail` | — (code) | GR-001/002/003 checks; order ID format validation |
+| 3 | `tool_agent` | **Llama 3.3 70B** (complex) or **8B** (simple) | Selects tools to call, or writes a direct reply |
+| 4 | `tool_executor` | — (code) | Dispatches each tool call with ownership validation |
+| 5 | `post_guardrail` | — (code) | GR-004: verifies no payment on escalation case |
+| 6 | `responder` | **Llama 3.1 8B Instant** | Formats tool results into a natural customer reply |
+
+For no-tool requests (greetings, chitchat), `tool_agent` writes a direct reply and the pipeline skips `tool_executor` → `post_guardrail` → goes straight to `responder`, which uses the agent's text as-is (no second LLM call).
+
+For escalations, `responder` uses a deterministic template (no LLM call).
 
 ---
 
@@ -66,37 +70,27 @@ kb_repo
 
 Two Llama models are used via the Groq API (OpenAI-compatible endpoint). Using both is intentional — planning accuracy and response latency have different requirements.
 
-| Flow node | Model | Rationale |
+| Pipeline node | Model | Rationale |
 |---|---|---|
-| Greeting / chitchat (`ResponseBuilder.converse`) | **Llama 3.1 8B Instant** | Trivial conversational reply; speed and cost matter, not reasoning depth |
-| Vague help, order ID format check, guardrails | — (deterministic) | Regex/code rules; no LLM required |
-| **Intent classification + action planning** (`Planner`) | **Llama 3.3 70B Versatile** | Structured JSON output with multi-step dependency reasoning; wrong plan here cascades to wrong tool calls |
-| Order tracking response | — (deterministic) | Template fast-path; covers the most common query type without an LLM call |
-| Escalation response | — (deterministic) | Fixed template for audit consistency |
-| **Response synthesis** for refund/compound/KB queries (`ResponseBuilder.build`) | **Llama 3.1 8B Instant** | Formats verified tool data into natural language; reasoning depth not needed, latency matters |
+| `tool_agent` — complex queries | **Llama 3.3 70B Versatile** | Multi-step tool selection; accuracy matters |
+| `tool_agent` — simple queries | **Llama 3.1 8B Instant** | Single-intent lookups; speed matters |
+| `responder` — tool-using paths | **Llama 3.1 8B Instant** | Formats verified data; reasoning depth not needed |
+| `responder` — escalation | — (deterministic template) | Consistent, auditable output |
+| `responder` — no-tool path | — (reuse tool_agent output) | Avoids a second LLM call entirely |
+
+Complexity classifier (`_is_complex`): messages containing escalation signals (damaged, fraud, lawsuit, etc.) or two or more action verbs (cancel + refund) route to the 70B model.
 
 **Config**: `PLANNER_MODEL` and `RESPONSE_MODEL` env vars — set in `.env`, pointing to `api.groq.com/openai/v1`.
 
 ---
 
-## 5. Planning Strategy
+## 5. Tool Design
 
-The Planner sends the customer message to Llama 3.3 70B Versatile with a **constrained system prompt** that forces JSON output conforming to a strict action schema. The model returns an `ActionPlan` with:
-
-- `intent`: classified intent (order_tracking, compound, escalation, etc.)
-- `steps[]`: ordered `ActionStep` list with `action`, `params`, `depends_on`
-
-**Temperature = 0** for maximum determinism. Output is validated in `_parse_and_validate()` before reaching the Executor. Malformed LLM output raises `PlannerError` — the pipeline never passes an unvalidated plan to tools.
-
----
-
-## 6. Tool Design
-
-Tools are MCP-inspired typed async interfaces. They are the **only** layer that touches repositories. Agent code never accesses JSON files directly.
+Tools are typed async interfaces. They are the **only** layer that touches repositories. Agent code never accesses JSON files directly.
 
 | Tool | Key methods | Backed by |
 |------|------------|-----------|
-| OmsTool | get_order, cancel_item, update_shipping_address | OrderRepository |
+| OmsTool | get_order, list_orders, cancel_item, update_shipping_address | OrderRepository |
 | CrmTool | get_customer, create_case, get_cases | CrmRepository |
 | PaymentTool | process_refund | PaymentRepository |
 | KbTool | search, get_article | KbRepository |
@@ -105,56 +99,76 @@ Tools are swappable — replacing JSON repos with REST APIs requires only changi
 
 ---
 
-## 7. Guardrails (Defence in Depth)
+## 6. Guardrails (Defence in Depth)
 
 Three independent layers enforce the Rs.25,000 threshold:
 
 | Layer | Where | When |
 |-------|-------|------|
-| GR-001 | Guardrails.pre_check | Before LLM — regex extracts amount from message |
-| PaymentTool._enforce_threshold | payment_tool.py | At call time — Decimal comparison |
-| GR-004 | Guardrails.post_check | After execution — verifies no payment on escalation case |
+| GR-001 | `pre_guardrail` node | Before LLM — regex extracts amount from message |
+| `PaymentTool._enforce_threshold` | payment_tool.py | At call time — Decimal comparison |
+| GR-004 | `post_guardrail` node | After execution — verifies no payment on escalation case |
 
 **Rule inventory:**
-- GR-001: High-value refund → block + route to escalation
+- GR-001: High-value refund mention → block + escalation message
 - GR-002: Empty message → reject
 - GR-003: Message > 2,000 chars → reject (prompt injection defence)
-- GR-004: Payment success + escalation case in same execution → critical block
+- GR-004: Payment success + escalation case in same turn → critical block
 
 ---
 
-## 8. Observability
+## 7. Observability
 
 Every request produces a `Tracer` with:
 - `trace_id`: `trc-<12 hex chars>` — unique per request
-- `tool_calls[]`: ordered record of every component invoked
-- `guardrail_events[]`: internal audit log of rule triggers
+- `tool_calls[]`: ordered record of every component invoked (model calls, tool calls, guardrail triggers)
 
-Tool call records include: `tool`, `action`, `status`, `latency_ms`, `meta`.
+Structured JSON logging (`LOG_FORMAT=json|text`) emits every log line as a parseable JSON object.
 
-Structured JSON logging (configurable via `LOG_FORMAT=json|text`) emits every log line as a parseable JSON object for Datadog/Splunk/CloudWatch ingestion. Sensitive fields (API keys, tokens) are automatically redacted.
+The `TraceStore` is an in-memory ring buffer (last 500 traces) exposed via `/admin/traces` and `/admin/kpis`.
 
 ---
 
-## 9. Security
+## 8. Security
 
-- **Ownership enforcement**: `order.customer_id == session_customer_id` checked before every tool mutation. Implemented in `Executor._assert_ownership()`.
+- **Ownership enforcement**: `order.customer_id == session_customer_id` checked before every tool mutation. Implemented in `agent/graph.py:_assert_ownership()`.
 - **Error opacity**: `OwnershipError` returns `"Order not found"` — never reveals the real owner.
 - **Session ID validation**: Pydantic regex `^[a-zA-Z0-9_\-]+$` rejects injection characters at the HTTP boundary.
-- **No authentication (by spec)**: Session store maps `session_id → customer_id` via file + env var + embedded pattern.
+- **No authentication (by spec)**: Session store maps `session_id → customer_id` via `data/sessions.json` and an embedded-pattern extractor for auth-generated sessions.
 
 ---
 
-## 10. Data Layer
+## 9. Data Layer
 
 All data is stored in JSON files under `data/`. Repositories maintain in-memory indexes (O(1) lookup) and flush to disk atomically using write-to-temp + `os.replace()` to prevent corruption.
 
-File ownership:
-- `orders.json` → OrderRepository (read/write)
-- `crm_cases.json` → CrmRepository (read/write)
-- `kb_articles.json` → KbRepository (read-only)
-- `payment_config.json` → PaymentRepository (read-only)
-- `refunds.json` → PaymentRepository (append-only)
+| File | Repository | Access |
+|------|------------|--------|
+| `orders.json` | OrderRepository | read/write |
+| `crm_cases.json` | CrmRepository | read/write |
+| `kb_articles.json` | KbRepository | read-only |
+| `payment_config.json` | PaymentRepository | read-only |
+| `refunds.json` | PaymentRepository | append-only |
+| `sessions.json` | SessionStore | read-only |
+| `users.json` | UserRepository | read/write |
+
+---
+
+## 10. API Endpoints
+
+| Method | Path | Purpose |
+|--------|------|---------|
+| POST | `/query` | Submit a customer message to the agent |
+| GET | `/health` | Liveness probe |
+| POST | `/cases` | Create a CRM support case directly |
+| GET | `/kb/search?tags=...` | Search KB articles by comma-separated tags |
+| GET | `/admin/traces` | Fetch recent request traces |
+| GET | `/admin/kpis` | Fetch KPI summary |
+| DELETE | `/session/{session_id}` | Clear server-side session history |
+| POST | `/auth/login` | Authenticate user, receive session_id |
+| POST | `/auth/register` | Register a new user account |
+| POST | `/auth/request-otp` | Request a password-reset OTP |
+| POST | `/auth/reset-password` | Reset password with OTP |
 
 ---
 
@@ -162,4 +176,5 @@ File ownership:
 
 - JSON-backed storage is not suitable for concurrent multi-process deployments. Production would use PostgreSQL or DynamoDB.
 - Session store is a simulation. Production would integrate with OAuth/JWT.
-- LLM calls are synchronous within the async pipeline. Production would add circuit breakers and timeout budgets.
+- `MemorySaver` checkpointer stores conversation history in-process memory only — restarting the server clears all histories.
+- LLM calls are not circuit-broken. Production would add timeout budgets and fallback paths.

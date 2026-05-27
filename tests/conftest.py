@@ -3,22 +3,22 @@ tests/conftest.py
 ==================
 Pytest fixtures and shared test configuration for AtlasCare.
 
-Root cause fix for failing tests
----------------------------------
-The original conftest.make_llm_mock() returned a mock whose
-side_effect was a list of completion OBJECTS.  But Planner._call_llm()
-returns a raw string (the completion text), not a completion object.
-So every test that used make_llm_mock got an empty tool_calls list
-because the planner received a MagicMock object instead of a JSON string
-and raised PlannerError internally, which the orchestrator swallowed.
+Mock strategy (new LangGraph architecture)
+------------------------------------------
+All LLM calls go through agent.graph._groq_client (lazy singleton).
+Tests patch this with a MagicMock whose chat.completions.create is an
+AsyncMock with side_effect=<list of completion mocks>.
 
-Fix: make_llm_mock() now returns an AsyncMock whose side_effect is a
-list of STRINGS:
-  [plan_json_string, response_text_string]
+Call order for a typical tool-using request (2 LLM calls):
+  1. tool_agent_node (70B) → make_tool_mock(...)  # decide what tools to call
+  2. tool_executor_node    → real tools run (no LLM call)
+  3. responder_node  (8B)  → make_text_mock(...)  # generate customer reply
 
-The first call (planner) returns the plan JSON string.
-The second call (response_builder) returns the response text string.
-Both _call_llm methods return raw strings so this matches exactly.
+For no-tool requests (greetings, KB queries — 1 LLM call):
+  1. tool_agent_node (70B) → make_done_mock("text")  # direct reply, used as-is
+
+For escalation (1 LLM call — deterministic response, no responder call):
+  1. tool_agent_node (70B) → make_tool_mock("escalate", ...)
 """
 
 import hashlib
@@ -40,8 +40,83 @@ os.environ.setdefault("GROQ_BASE_URL",              "https://api.groq.com/openai
 os.environ.setdefault("PLANNER_MODEL",              "llama-3.3-70b-versatile")
 os.environ.setdefault("RESPONSE_MODEL",             "llama-3.1-8b-instant")
 os.environ.setdefault("AUTO_REFUND_LIMIT_INR",      "25000.0")
-os.environ.setdefault("PAYMENT_MAX_RETRIES",        "1")
+os.environ.setdefault("PAYMENT_MAX_RETRIES",        "3")
 os.environ.setdefault("PAYMENT_RETRY_BASE_DELAY_S", "0.0")
+
+
+# ---------------------------------------------------------------------------
+# LLM completion mock helpers
+# ---------------------------------------------------------------------------
+
+def make_tool_mock(tool_name: str, args: dict) -> MagicMock:
+    """70B completion that requests a single tool call."""
+    tc = MagicMock()
+    tc.id = f"call_{tool_name}_01"
+    tc.function.name = tool_name
+    tc.function.arguments = json.dumps(args)
+
+    msg = MagicMock()
+    msg.content = None
+    msg.tool_calls = [tc]
+
+    choice = MagicMock()
+    choice.message = msg
+
+    completion = MagicMock()
+    completion.choices = [choice]
+    return completion
+
+
+def make_multi_tool_mock(tool_calls: list[tuple[str, dict]]) -> MagicMock:
+    """70B completion that requests multiple tool calls in parallel."""
+    tcs = []
+    for i, (tool_name, args) in enumerate(tool_calls):
+        tc = MagicMock()
+        tc.id = f"call_{tool_name}_{i:02d}"
+        tc.function.name = tool_name
+        tc.function.arguments = json.dumps(args)
+        tcs.append(tc)
+
+    msg = MagicMock()
+    msg.content = None
+    msg.tool_calls = tcs
+
+    choice = MagicMock()
+    choice.message = msg
+
+    completion = MagicMock()
+    completion.choices = [choice]
+    return completion
+
+
+def make_done_mock(text: str = "") -> MagicMock:
+    """70B completion with no tool calls — signals the agent is done planning."""
+    msg = MagicMock()
+    msg.content = text
+    msg.tool_calls = None
+
+    choice = MagicMock()
+    choice.message = msg
+
+    completion = MagicMock()
+    completion.choices = [choice]
+    return completion
+
+
+def make_text_mock(
+    text: str = "Your request has been processed. Is there anything else I can help with?",
+) -> MagicMock:
+    """8B completion with a customer-facing text response."""
+    msg = MagicMock()
+    msg.content = text
+    msg.tool_calls = None
+
+    choice = MagicMock()
+    choice.message = msg
+
+    completion = MagicMock()
+    completion.choices = [choice]
+    return completion
 
 
 # ---------------------------------------------------------------------------
@@ -199,104 +274,11 @@ def _make_payment_config() -> dict[str, Any]:
         "supported_methods":     ["HDFC_CREDIT", "ICICI_DEBIT", "SBI_NETBANKING", "UPI", "original"],
         "refund_sla_days":       5,
         "behaviour": {
-            "failure_rate":    0.0,   # no failures in tests
+            "failure_rate":    0.0,
             "failure_code":    "504",
             "failure_message": "PAYMENT_GATEWAY_TIMEOUT",
         },
     }
-
-
-# ---------------------------------------------------------------------------
-# LLM mock helpers
-# ---------------------------------------------------------------------------
-
-def _mock_plan_response(intent: str, steps: list) -> MagicMock:
-    """
-    Build a fake completion object whose .choices[0].message.content
-    is a valid plan JSON string.
-
-    Used only so tests can call plan_completion.choices[0].message.content
-    to extract the plan text when building mocks.
-    """
-    plan_json = json.dumps({"intent": intent, "steps": steps})
-    mock_msg  = MagicMock()
-    mock_msg.content = plan_json
-    mock_choice  = MagicMock()
-    mock_choice.message = mock_msg
-    mock_completion = MagicMock()
-    mock_completion.choices = [mock_choice]
-    return mock_completion
-
-
-def make_llm_mock(
-    plan_completion: MagicMock,
-    response_text:   str = "Your request has been processed.",
-) -> AsyncMock:
-    """
-    Build an AsyncMock that correctly mimics Planner._call_llm and
-    ResponseBuilder._call_llm.
-
-    Both methods return a raw string (NOT a completion object):
-      - First call  → plan JSON string  (consumed by Planner)
-      - Second call → response text string (consumed by ResponseBuilder)
-
-    The mock is set up with side_effect=[plan_str, response_str] so
-    the first await returns the plan and the second returns the response.
-
-    Usage in tests:
-        mock = make_llm_mock(J1_PLAN, "Your order is processing.")
-        with patch("agent.planner.Planner._call_llm", new=mock):
-            with patch("agent.response_builder.ResponseBuilder._call_llm", new=mock):
-                body = _post(client, "Where is ORD-78321?")
-    """
-    plan_str = plan_completion.choices[0].message.content
-    return AsyncMock(side_effect=[plan_str, response_text])
-
-
-# ---------------------------------------------------------------------------
-# Pre-built plan mocks for J1, J2, J3
-# ---------------------------------------------------------------------------
-
-J1_PLAN = _mock_plan_response(
-    "order_tracking",
-    [{"action": "get_order", "params": {"order_id": "ORD-78321"}, "depends_on": []}],
-)
-
-J2_PLAN = _mock_plan_response(
-    "compound",
-    [
-        {
-            "action":     "cancel_item",
-            "params":     {"order_id": "ORD-78321", "line_id": 2},
-            "depends_on": [],
-        },
-        {
-            "action":     "process_refund",
-            "params":     {"order_id": "ORD-78321", "amount_inr": 1500.0, "method": "HDFC_CREDIT"},
-            "depends_on": [0],
-        },
-        {
-            "action":     "update_address",
-            "params":     {"order_id": "ORD-78321", "address_label": "office"},
-            "depends_on": [],
-        },
-    ],
-)
-
-J3_PLAN = _mock_plan_response(
-    "escalation",
-    [
-        {
-            "action": "escalate",
-            "params": {
-                "order_id":   "ORD-78500",
-                "reason":     "Customer requesting full refund for damaged laptop. Exceeds threshold.",
-                "amount_inr": 42000.0,
-            },
-            "depends_on": [],
-        }
-    ],
-)
 
 
 # ---------------------------------------------------------------------------
@@ -305,19 +287,13 @@ J3_PLAN = _mock_plan_response(
 
 @pytest.fixture
 def data_dir(tmp_path: Path) -> Path:
-    """
-    Create an isolated data directory with seeded JSON files.
-    Every test gets a fresh tmp_path — no cross-test data contamination.
-    """
     d = tmp_path / "data"
     d.mkdir()
 
-    # CRM — customers and cases
     crm_data = {
         "customers": [
             _make_customer("CUST-001", tier="gold"),
             _make_customer("CUST-002", tier="platinum"),
-            # CUST-003 has home address only (no office) — tests missing address
             {
                 **_make_customer("CUST-003", tier="standard"),
                 "addresses": [
@@ -335,7 +311,6 @@ def data_dir(tmp_path: Path) -> Path:
     }
     (d / "crm_cases.json").write_text(json.dumps(crm_data, indent=2), encoding="utf-8")
 
-    # Orders — covers all statuses and boundary amounts
     orders_data = {
         "orders": [
             _make_order("ORD-78321", "CUST-001", "processing"),
@@ -343,51 +318,35 @@ def data_dir(tmp_path: Path) -> Path:
             _make_order("ORD-78323", "CUST-001", "delivered"),
             _make_order("ORD-78324", "CUST-001", "placed"),
             _make_order("ORD-78325", "CUST-001", "cancelled"),
-            # Refund boundary: Rs.24,999 — just below threshold
             _make_order("ORD-78400", "CUST-001", "processing", items=[
                 {"line_id": 1, "product_id": "P-A", "name": "Item A",
                  "quantity": 1, "unit_price": 24999.0, "status": "active"},
             ]),
-            # Refund boundary: Rs.25,000 — exactly at threshold
             _make_order("ORD-78401", "CUST-001", "processing", items=[
                 {"line_id": 1, "product_id": "P-B", "name": "Item B",
                  "quantity": 1, "unit_price": 25000.0, "status": "active"},
             ]),
-            # Refund boundary: Rs.25,001 — just above threshold
             _make_order("ORD-78402", "CUST-001", "processing", items=[
                 {"line_id": 1, "product_id": "P-C", "name": "Item C",
                  "quantity": 1, "unit_price": 25001.0, "status": "active"},
             ]),
-            # J3: Rs.42,000 high-value damaged item
             _make_order("ORD-78500", "CUST-001", "delivered", items=[
                 {"line_id": 1, "product_id": "P-HV", "name": "Gaming Laptop",
                  "quantity": 1, "unit_price": 42000.0, "status": "active"},
             ]),
-            # CUST-002 order — for cross-customer security tests
             _make_order("ORD-99001", "CUST-002", "processing"),
         ]
     }
     (d / "orders.json").write_text(json.dumps(orders_data, indent=2), encoding="utf-8")
-
-    # KB articles
     (d / "kb_articles.json").write_text(
-        json.dumps({"articles": _make_kb_articles()}, indent=2),
-        encoding="utf-8",
+        json.dumps({"articles": _make_kb_articles()}, indent=2), encoding="utf-8"
     )
-
-    # Payment config — failure_rate=0.0 so tests never hit simulated timeout
     (d / "payment_config.json").write_text(
-        json.dumps(_make_payment_config(), indent=2),
-        encoding="utf-8",
+        json.dumps(_make_payment_config(), indent=2), encoding="utf-8"
     )
-
-    # Empty refunds — populated at runtime
     (d / "refunds.json").write_text(
-        json.dumps({"refunds": []}, indent=2),
-        encoding="utf-8",
+        json.dumps({"refunds": []}, indent=2), encoding="utf-8"
     )
-
-    # Sessions
     (d / "sessions.json").write_text(
         json.dumps({
             "sessions": [
@@ -398,23 +357,18 @@ def data_dir(tmp_path: Path) -> Path:
         }, indent=2),
         encoding="utf-8",
     )
-
-    # Users (auth credentials — separate from CRM customer data)
-    users_data = {
-        "users": [
+    (d / "users.json").write_text(
+        json.dumps({"users": [
             _make_user("alice", "CUST-001", password="Atlas@123"),
             _make_user("bob",   "CUST-002", password="Atlas@456"),
-        ]
-    }
-    (d / "users.json").write_text(
-        json.dumps(users_data, indent=2), encoding="utf-8"
+        ]}, indent=2),
+        encoding="utf-8",
     )
-
     return d
 
 
 # ---------------------------------------------------------------------------
-# Environment patcher — points all repos to the isolated data_dir
+# Environment patcher
 # ---------------------------------------------------------------------------
 
 @pytest.fixture
@@ -434,19 +388,14 @@ def patched_env(data_dir: Path, monkeypatch: pytest.MonkeyPatch):
 
 @pytest.fixture
 def client(patched_env) -> Generator[TestClient, None, None]:
-    """
-    FastAPI TestClient with:
-      - Isolated data directory (fresh per test)
-      - App reloaded so lifespan startup picks up patched env vars
-      - raise_server_exceptions=False so 422/500 responses don't raise
-        in the test — we assert on status codes instead
-    """
     import importlib
+    import agent.graph as graph_module
     import main as main_module
-    # Clear session history between tests to prevent cross-test contamination
-    from agent.orchestrator import _session_history
-    _session_history.clear()
 
+    # Reload graph so module-level tool singletons (_oms, _crm, etc.)
+    # are re-created using the patched env data paths for this test.
+    importlib.reload(graph_module)
+    graph_module._groq_client = None  # reset lazy singleton
     importlib.reload(main_module)
 
     with TestClient(main_module.app, raise_server_exceptions=False) as c:

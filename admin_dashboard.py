@@ -16,11 +16,12 @@ Customer Gradio UI runs on 7860.
 import os
 import json
 import time
+import base64
 from pathlib import Path
 from datetime import datetime, timezone
-from collections import defaultdict, deque
-from threading import Lock
+from collections import defaultdict
 
+import requests as _requests
 import gradio as gr
 from dotenv import load_dotenv
 
@@ -31,31 +32,33 @@ load_dotenv()
 # ---------------------------------------------------------------------------
 ADMIN_PORT      = int(os.getenv("ADMIN_GRADIO_PORT", "7861"))
 ADMIN_HOST      = os.getenv("ADMIN_GRADIO_HOST", "127.0.0.1")
+API_PORT        = os.getenv("PORT", "8000")
+API_BASE        = f"http://127.0.0.1:{API_PORT}"
 DATA_DIR        = Path(os.getenv("ORDERS_DATA_PATH", "./data/orders.json")).parent
 CRM_PATH        = DATA_DIR / "crm_cases.json"
 REFUNDS_PATH    = DATA_DIR / "refunds.json"
 ORDERS_PATH     = DATA_DIR / "orders.json"
 
-# In-memory trace store (ring buffer — last 500 traces)
-_trace_store: deque = deque(maxlen=500)
-_trace_lock  = Lock()
-
 # ---------------------------------------------------------------------------
-# Trace ingestion — called by the agent at runtime
+# Trace fetcher — polls the FastAPI /admin/traces endpoint
 # ---------------------------------------------------------------------------
-
-def record_trace(trace: dict):
-    """Called by the agent to push a trace into the admin store."""
-    with _trace_lock:
-        _trace_store.append({
-            **trace,
-            "recorded_at": datetime.now(timezone.utc).isoformat(),
-        })
-
 
 def get_traces() -> list[dict]:
-    with _trace_lock:
-        return list(reversed(_trace_store))
+    """Fetch traces from the running FastAPI server."""
+    try:
+        resp = _requests.get(f"{API_BASE}/admin/traces", timeout=3)
+        return resp.json() if resp.ok else []
+    except Exception:
+        return []
+
+
+def _fetch_kpis_from_api() -> dict | None:
+    """Fetch pre-computed KPIs from the FastAPI server."""
+    try:
+        resp = _requests.get(f"{API_BASE}/admin/kpis", timeout=3)
+        return resp.json() if resp.ok else None
+    except Exception:
+        return None
 
 
 # ---------------------------------------------------------------------------
@@ -88,42 +91,29 @@ def _load_orders() -> list[dict]:
 # ---------------------------------------------------------------------------
 
 def _compute_kpis() -> dict:
-    traces  = get_traces()
+    # Traffic/latency KPIs come from the FastAPI trace store via API
+    api_kpis = _fetch_kpis_from_api() or {}
+
+    # CRM/refund KPIs come from the JSON files (source of truth)
     cases   = _load_cases()
     refunds = _load_refunds()
     orders  = _load_orders()
 
-    total_requests   = len(traces)
-    escalated        = sum(1 for t in traces if t.get("escalated"))
-    guardrail_hits   = sum(
-        1 for t in traces
-        if any(tc.get("tool") == "guardrails" for tc in t.get("tool_calls", []))
-    )
-    ownership_denied = sum(
-        1 for t in traces
-        if any(tc.get("status") == "ownership_denied" for tc in t.get("tool_calls", []))
-    )
-    latencies = [t["latency_ms"] for t in traces if t.get("latency_ms")]
-    avg_latency = int(sum(latencies) / len(latencies)) if latencies else 0
-    p99_latency = int(sorted(latencies)[int(len(latencies) * 0.99)]) if len(latencies) > 10 else avg_latency
-    breached_sla = sum(1 for l in latencies if l > 3000)
-
-    open_cases     = sum(1 for c in cases if c.get("status") == "open")
-    high_pri_cases = sum(1 for c in cases if c.get("priority") == "high")
+    open_cases       = sum(1 for c in cases if c.get("status") == "open")
+    high_pri_cases   = sum(1 for c in cases if c.get("priority") == "high")
     cases_with_trace = sum(1 for c in cases if c.get("trace_id"))
-
     total_refunds    = len(refunds)
     refund_amount    = sum(r.get("amount_inr", 0) for r in refunds)
 
     return {
-        "total_requests":    total_requests,
-        "escalated":         escalated,
-        "escalation_rate":   f"{(escalated/total_requests*100):.1f}%" if total_requests else "0%",
-        "guardrail_hits":    guardrail_hits,
-        "ownership_denied":  ownership_denied,
-        "avg_latency_ms":    avg_latency,
-        "p99_latency_ms":    p99_latency,
-        "sla_breaches":      breached_sla,
+        "total_requests":   api_kpis.get("total_requests", 0),
+        "escalated":        api_kpis.get("escalated", 0),
+        "escalation_rate":  api_kpis.get("escalation_rate", "0%"),
+        "guardrail_hits":   api_kpis.get("guardrail_hits", 0),
+        "ownership_denied": api_kpis.get("ownership_denied", 0),
+        "avg_latency_ms":   api_kpis.get("avg_latency_ms", 0),
+        "p99_latency_ms":   api_kpis.get("p99_latency_ms", 0),
+        "sla_breaches":     api_kpis.get("sla_breaches", 0),
         "open_cases":        open_cases,
         "high_pri_cases":    high_pri_cases,
         "cases_with_trace":  cases_with_trace,
@@ -170,7 +160,7 @@ def _fmt_traces(limit: int = 20) -> str:
     lines = ["## 🔍 Recent Traces\n"]
     for t in traces:
         tool_summary = ", ".join(
-            f"`{tc.get('action','?')}` → {tc.get('status','?')}"
+            f"`{tc.get('action','?')}` -> {tc.get('status','?')}"
             for tc in t.get("tool_calls", [])
         )
         guardrail = "🛡️ " if any(
@@ -257,7 +247,6 @@ with gr.Blocks(title="AtlasCare Admin", theme=gr.themes.Soft()) as dashboard:
 
     with gr.Row():
         refresh_btn = gr.Button("🔄 Refresh All", variant="primary", scale=1)
-        # Fix applied here: Wrapped in a Column to allow scaling.
         with gr.Column(scale=4):
             gr.Markdown("Auto-refreshes when you click Refresh All.")
 
@@ -306,6 +295,41 @@ with gr.Blocks(title="AtlasCare Admin", theme=gr.themes.Soft()) as dashboard:
         with gr.Tab("💳 Refunds"):
             refunds_display = gr.Markdown(_fmt_refunds())
 
+        # ── Agent Graph ───────────────────────────────────────────────────
+        with gr.Tab("🕸️ Agent Graph"):
+            def _graph_html() -> str:
+                try:
+                    from agent.graph import build_graph
+                    png_bytes = build_graph().get_graph().draw_mermaid_png()
+                    b64 = base64.b64encode(png_bytes).decode()
+                    return (
+                        '<div style="background:#1e1e2e; padding:16px; border-radius:8px; overflow:auto;">'
+                        f'<img src="data:image/png;base64,{b64}" style="max-width:100%; height:auto;"/>'
+                        '</div>'
+                    )
+                except Exception:
+                    fallback = (
+                        "graph TD\n"
+                        "    A([START]) --> B[pre_guardrail]\n"
+                        "    B -->|blocked| Z([END])\n"
+                        "    B -->|allow| C[tool_agent]\n"
+                        "    C -->|tool calls| D[tool_executor]\n"
+                        "    C -->|no tools| E[post_guardrail]\n"
+                        "    D --> E\n"
+                        "    E -->|blocked| Z\n"
+                        "    E -->|allow| F[responder]\n"
+                        "    F --> Z"
+                    )
+                    return (
+                        '<div style="background:#1e1e2e; color:#cdd6f4; padding:16px; border-radius:8px;">'
+                        '<p style="color:#f38ba8; margin-top:0;">⚠️ Graph image unavailable — showing Mermaid source</p>'
+                        f'<pre style="font-size:12px; white-space:pre-wrap;">{fallback}</pre>'
+                        '</div>'
+                    )
+
+            graph_display = gr.HTML(_graph_html())
+            gr.Button("🔄 Refresh Graph").click(fn=_graph_html, outputs=graph_display)
+
         # ── Raw JSON viewer ───────────────────────────────────────────────
         with gr.Tab("📁 Raw Data"):
             file_choice = gr.Radio(
@@ -341,7 +365,7 @@ with gr.Blocks(title="AtlasCare Admin", theme=gr.themes.Soft()) as dashboard:
 
 
 if __name__ == "__main__":
-    print(f"AtlasCare Admin Dashboard → http://{ADMIN_HOST}:{ADMIN_PORT}")
+    print(f"AtlasCare Admin Dashboard -> http://{ADMIN_HOST}:{ADMIN_PORT}")
     print("Customer UI runs on port 7860. This dashboard is separate.")
     dashboard.launch(
         server_name=ADMIN_HOST,

@@ -91,7 +91,6 @@ class OmsTool:
         OrderNotFoundError  if order_id does not exist.
         OmsError            on any unexpected repository failure.
         """
-        order_id = order_id.strip().upper()
         logger.debug("OmsTool.get_order | order_id=%s", order_id)
 
         order = self._order_repo.find_by_id(order_id)
@@ -137,7 +136,6 @@ class OmsTool:
             line_id,
         )
 
-        order_id = order_id.strip().upper()
         order = self._order_repo.find_by_id(order_id)
         if order is None:
             raise OrderNotFoundError(f"Order '{order_id}' not found.")
@@ -197,6 +195,19 @@ class OmsTool:
         }
 
     # ------------------------------------------------------------------
+    # list_orders
+    # ------------------------------------------------------------------
+    async def list_orders(self, customer_id: str) -> list[dict[str, Any]]:
+        """
+        Return all orders for a customer, newest first.
+
+        No ownership check needed — customer_id comes from the
+        authenticated session, so all returned orders belong to them.
+        """
+        logger.debug("OmsTool.list_orders | customer_id=%s", customer_id)
+        return self._order_repo.find_by_customer(customer_id)
+
+    # ------------------------------------------------------------------
     # update_shipping_address
     # ------------------------------------------------------------------
     async def update_shipping_address(
@@ -233,7 +244,6 @@ class OmsTool:
             address_label,
         )
 
-        order_id = order_id.strip().upper()
         order = self._order_repo.find_by_id(order_id)
         if order is None:
             raise OrderNotFoundError(f"Order '{order_id}' not found.")
@@ -246,10 +256,8 @@ class OmsTool:
                 f"with status '{order['status']}'."
             )
 
-        # Resolve the address from the CRM repository
         from repositories.crm_repository import CrmRepository
-        crm_repo = CrmRepository()
-        customer = crm_repo.find_customer_by_id(customer_id)
+        customer = CrmRepository().find_customer_by_id(customer_id)
         if customer is None:
             raise AddressNotFoundError(
                 f"Customer profile not found for '{customer_id}'."

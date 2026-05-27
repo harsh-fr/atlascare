@@ -158,23 +158,42 @@ class PaymentTool:
             customer_id,
         )
 
-        result = await self._call_gateway_with_retry(
-            order_id=order_id,
-            amount_inr=amount_inr,
-            method=method,
-            customer_id=customer_id,
-        )
+        import tools.payment_tool as _self_mod
+        max_retries      = _self_mod.MAX_RETRIES
+        retry_base_delay = _self_mod.RETRY_BASE_DELAY_S
+        last_error: Exception | None = None
 
-        logger.info(
-            "PaymentTool.process_refund SUCCESS | refund_id=%s | "
-            "order=%s | amount=%.2f | sla_days=%d",
-            result["refund_id"],
-            order_id,
-            amount_inr,
-            result["sla_days"],
-        )
+        for attempt in range(1, max_retries + 1):
+            try:
+                result = await self._call_gateway_with_retry(
+                    order_id=order_id,
+                    amount_inr=amount_inr,
+                    method=method,
+                    customer_id=customer_id,
+                )
+                logger.info(
+                    "PaymentTool.process_refund SUCCESS | refund_id=%s | "
+                    "order=%s | amount=%.2f | sla_days=%d",
+                    result["refund_id"],
+                    order_id,
+                    amount_inr,
+                    result["sla_days"],
+                )
+                return result
+            except PaymentGatewayError as exc:
+                last_error = exc
+                logger.warning(
+                    "process_refund attempt %d/%d failed | order=%s | error=%s",
+                    attempt, max_retries, order_id, exc,
+                )
+                if attempt < max_retries:
+                    delay = retry_base_delay * (2 ** (attempt - 1))
+                    await asyncio.sleep(delay)
 
-        return result
+        raise PaymentGatewayError(
+            f"Payment gateway failed after {max_retries} attempts "
+            f"for order '{order_id}'. Last error: {last_error}"
+        )
 
     # ------------------------------------------------------------------
     # Private — validation

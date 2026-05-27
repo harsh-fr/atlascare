@@ -77,10 +77,12 @@ class OrderService:
         target["status"] = "cancelled"
 
         # Recalculate total from active items using Decimal
+        # start=Decimal("0") prevents sum() returning int(0) when no items remain
         new_total = sum(
-            Decimal(str(item["unit_price"])) * item["quantity"]
-            for item in updated["items"]
-            if item["status"] == "active"
+            (Decimal(str(item["unit_price"])) * item["quantity"]
+             for item in updated["items"]
+             if item["status"] == "active"),
+            Decimal("0"),
         )
         updated["total_amount"] = float(
             new_total.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)
@@ -160,9 +162,10 @@ class OrderService:
         Used for refund amount validation and order summary.
         """
         total = sum(
-            Decimal(str(item["unit_price"])) * item["quantity"]
-            for item in order.get("items", [])
-            if item.get("status") == "active"
+            (Decimal(str(item["unit_price"])) * item["quantity"]
+             for item in order.get("items", [])
+             if item.get("status") == "active"),
+            Decimal("0"),
         )
         return float(
             total.quantize(Decimal("0.01"), rounding=ROUND_HALF_UP)

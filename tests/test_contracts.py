@@ -7,9 +7,9 @@ API contract and schema correctness tests.
 import re
 import json
 import pytest
-from unittest.mock import patch
+from unittest.mock import patch, AsyncMock, MagicMock
 from fastapi.testclient import TestClient
-from tests.conftest import _mock_plan_response, make_llm_mock
+from tests.conftest import make_tool_mock, make_done_mock, make_text_mock
 
 
 # ---------------------------------------------------------------------------
@@ -17,13 +17,14 @@ from tests.conftest import _mock_plan_response, make_llm_mock
 # ---------------------------------------------------------------------------
 
 def _valid_query(client, message="Where is my order ORD-78321?"):
-    plan = _mock_plan_response("order_tracking",
-        [{"action": "get_order", "params": {"order_id": "ORD-78321"}, "depends_on": []}])
-    mock = make_llm_mock(plan, "Your order is being processed.")
-    with patch("agent.planner.Planner._call_llm", new=mock):
-        with patch("agent.response_builder.ResponseBuilder._call_llm", new=mock):
-            resp = client.post("/query",
-                json={"message": message, "session_id": "sess-cust001"})
+    mock_client = MagicMock()
+    mock_client.chat.completions.create = AsyncMock(side_effect=[
+        make_tool_mock("get_order", {"order_id": "ORD-78321"}),
+        make_text_mock("Your order is being processed."),
+    ])
+    with patch("agent.graph._groq_client", mock_client):
+        resp = client.post("/query",
+            json={"message": message, "session_id": "sess-cust001"})
     assert resp.status_code == 200
     return resp.json()
 
@@ -73,14 +74,11 @@ class TestQueryRequestContract:
         assert resp.status_code == 422
 
     def test_422_response_is_json_serialisable(self, client):
-        """422 error body must be valid JSON — no ValueError objects in detail."""
         resp = client.post("/query", json={"message": "   ", "session_id": "sess-cust001"})
         assert resp.status_code == 422
-        # Must not raise — if ValueError leaked, json() would fail
         body = resp.json()
         assert "detail" in body
-        # Re-serialise to confirm it's clean
-        json.dumps(body)   # raises TypeError if non-serialisable values present
+        json.dumps(body)
 
     def test_injection_session_id_returns_422(self, client):
         resp = client.post("/query",
@@ -88,16 +86,17 @@ class TestQueryRequestContract:
         assert resp.status_code == 422
 
     def test_extra_fields_ignored(self, client):
-        plan = _mock_plan_response("order_tracking",
-            [{"action": "get_order", "params": {"order_id": "ORD-78321"}, "depends_on": []}])
-        mock = make_llm_mock(plan, "Your order.")
-        with patch("agent.planner.Planner._call_llm", new=mock):
-            with patch("agent.response_builder.ResponseBuilder._call_llm", new=mock):
-                resp = client.post("/query", json={
-                    "message":          "Where is ORD-78321?",
-                    "session_id":       "sess-cust001",
-                    "unexpected_field": "should be ignored",
-                })
+        mock_client = MagicMock()
+        mock_client.chat.completions.create = AsyncMock(side_effect=[
+            make_tool_mock("get_order", {"order_id": "ORD-78321"}),
+            make_text_mock("Your order."),
+        ])
+        with patch("agent.graph._groq_client", mock_client):
+            resp = client.post("/query", json={
+                "message":          "Where is ORD-78321?",
+                "session_id":       "sess-cust001",
+                "unexpected_field": "should be ignored",
+            })
         assert resp.status_code == 200
 
 
@@ -171,10 +170,10 @@ class TestQueryResponseContract:
     def test_no_extra_top_level_fields(self, client):
         body  = _valid_query(client)
         extra = set(body.keys()) - {"response", "trace", "task_complete"}
-        assert not extra, f"Unexpected top-level keys: {extra}"
+        assert not extra
 
     def test_response_is_valid_json_serialisable(self, client):
-        body = _valid_query(client)
+        body       = _valid_query(client)
         serialised = json.dumps(body)
         reparsed   = json.loads(serialised)
         assert reparsed["trace"]["trace_id"] == body["trace"]["trace_id"]
@@ -190,8 +189,7 @@ class TestDataSchemaConformance:
         from repositories.order_repository import OrderRepository
         pattern = re.compile(r"^ORD-\d{5}$")
         for order in OrderRepository().list_all():
-            assert pattern.match(order["order_id"]), \
-                f"order_id '{order['order_id']}' does not match schema."
+            assert pattern.match(order["order_id"])
 
     def test_orders_schema_total_equals_sum_of_active_items(self, patched_env):
         from repositories.order_repository import OrderRepository
@@ -200,8 +198,7 @@ class TestDataSchemaConformance:
                 i["unit_price"] * i["quantity"]
                 for i in order["items"] if i["status"] == "active"
             )
-            assert abs(order["total_amount"] - expected) < 0.01, \
-                f"Order {order['order_id']}: total={order['total_amount']} expected={expected}"
+            assert abs(order["total_amount"] - expected) < 0.01
 
     def test_orders_schema_status_valid(self, patched_env):
         from repositories.order_repository import OrderRepository
@@ -226,7 +223,7 @@ class TestDataSchemaConformance:
         required = {"article_id", "title", "tags", "content", "last_updated"}
         for a in KbRepository().get_all_articles():
             missing = required - set(a.keys())
-            assert not missing, f"KB article {a.get('article_id')} missing: {missing}"
+            assert not missing
 
     def test_kb_article_id_pattern(self, patched_env):
         from repositories.kb_repository import KbRepository

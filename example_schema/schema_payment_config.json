@@ -1,0 +1,68 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "payment_config.json",
+  "description": "Payments gateway configuration. Defines accepted methods, limits, and simulated behaviour.",
+  "type": "object",
+  "required": ["auto_refund_limit_inr", "supported_methods", "refund_sla_days", "behaviour"],
+  "properties": {
+    "auto_refund_limit_inr": {
+      "type": "number",
+      "description": "Maximum refund amount processed automatically without human approval. Fixed at Rs.25,000.",
+      "const": 25000,
+      "example": 25000
+    },
+    "supported_methods": {
+      "type": "array",
+      "description": "Payment methods accepted for refunds",
+      "items": {
+        "type": "string",
+        "enum": ["HDFC_CREDIT", "ICICI_DEBIT", "SBI_NETBANKING", "UPI", "original"]
+      },
+      "example": ["HDFC_CREDIT", "ICICI_DEBIT", "SBI_NETBANKING", "UPI", "original"]
+    },
+    "refund_sla_days": {
+      "type": "integer",
+      "description": "Business days for refund to reflect in customer account",
+      "example": 5
+    },
+    "behaviour": {
+      "type": "object",
+      "description": "Simulated gateway behaviour for local testing",
+      "required": ["failure_rate"],
+      "properties": {
+        "failure_rate": {
+          "type": "number",
+          "minimum": 0,
+          "maximum": 1,
+          "description": "Fraction of refund calls that simulate a gateway timeout (0.0 to 1.0). Use 0.03 for realistic 3% failure rate.",
+          "example": 0.03
+        },
+        "failure_code": {
+          "type": "string",
+          "description": "HTTP error code returned on simulated failure",
+          "example": "504"
+        },
+        "failure_message": {
+          "type": "string",
+          "example": "PAYMENT_GATEWAY_TIMEOUT"
+        }
+      }
+    }
+  },
+  "_sample_record": {
+    "auto_refund_limit_inr": 25000,
+    "supported_methods": [
+      "HDFC_CREDIT",
+      "ICICI_DEBIT",
+      "SBI_NETBANKING",
+      "UPI",
+      "original"
+    ],
+    "refund_sla_days": 5,
+    "behaviour": {
+      "failure_rate":    0.03,
+      "failure_code":    "504",
+      "failure_message": "PAYMENT_GATEWAY_TIMEOUT"
+    }
+  }
+}

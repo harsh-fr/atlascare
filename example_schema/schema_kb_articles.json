@@ -1,0 +1,63 @@
+{
+  "$schema": "http://json-schema.org/draft-07/schema#",
+  "title": "kb_articles.json",
+  "description": "Knowledge base articles covering return policy, refund rules, and escalation SLAs.",
+  "type": "object",
+  "required": ["articles"],
+  "properties": {
+    "articles": {
+      "type": "array",
+      "items": {
+        "type": "object",
+        "required": ["article_id", "title", "tags", "content", "last_updated"],
+        "properties": {
+          "article_id": {
+            "type": "string",
+            "pattern": "^KB-[0-9]{3}$",
+            "example": "KB-001"
+          },
+          "title": {
+            "type": "string",
+            "example": "Refund Policy & Threshold Rules"
+          },
+          "tags": {
+            "type": "array",
+            "description": "Used for KB search via GET /kb/search?tags=return,refund",
+            "items": { "type": "string" },
+            "example": ["refund", "threshold", "payments", "escalation"]
+          },
+          "content": {
+            "type": "string",
+            "description": "Full article text. Must include factual policy details used by the agent.",
+            "example": "Refunds up to Rs.25,000 are processed automatically via the Payments Gateway..."
+          },
+          "last_updated": {
+            "type": "string",
+            "format": "date",
+            "example": "2025-04-01"
+          },
+          "applies_to": {
+            "type": "array",
+            "description": "Product categories this article applies to",
+            "items": { "type": "string" },
+            "example": ["electronics", "apparel", "home_goods"]
+          }
+        }
+      }
+    }
+  },
+  "_required_articles": [
+    "An article covering the Rs.25,000 auto-refund threshold and escalation process",
+    "An article covering the return window policy (e.g. 7 or 30 days)",
+    "An article covering escalation SLA (e.g. specialist response within 24 hours)",
+    "An article covering partial cancellation and reshipping rules"
+  ],
+  "_sample_record": {
+    "article_id":   "KB-001",
+    "title":        "Refund Policy and Threshold Rules",
+    "tags":         ["refund", "threshold", "payments", "escalation", "return"],
+    "content":      "Acme Retail processes refunds automatically for amounts up to Rs.25,000 via the Payments Gateway. Refund requests exceeding Rs.25,000 must be escalated to a human specialist via the CRM. The specialist team has a 24-hour response SLA. Customers must raise refund requests within 30 days of delivery. Damaged or defective items are eligible for a full refund regardless of value, subject to specialist approval for amounts above the threshold.",
+    "last_updated": "2025-04-01",
+    "applies_to":   ["electronics", "apparel", "home_goods"]
+  }
+}

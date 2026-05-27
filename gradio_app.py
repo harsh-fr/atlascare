@@ -2,21 +2,10 @@
 gradio_app.py
 =============
 AtlasCare Customer-Facing Gradio UI.
-
-Features
---------
-- Authentication: login / register / forgot-password (OTP = 9999 in demo)
-- Conversation history passed to backend via enriched message context
-- Session timeout: warns after inactivity, auto-terminates session
-- Server-side session history cleared on session end (Fix 1)
-- Greetings routed through LLM for natural responses (Fix 2)
-- "Request resolved" banner uses backend task_complete signal (Fix 3)
-- Graceful exit on "exit" keyword
 """
 
 import os
 import secrets
-import time
 import threading
 import requests
 import gradio as gr
@@ -29,12 +18,8 @@ API_HOST     = "127.0.0.1"
 API_URL      = f"http://{API_HOST}:{PORT}/query"
 AUTH_URL     = f"http://{API_HOST}:{PORT}/auth"
 DELETE_URL   = f"http://{API_HOST}:{PORT}/session"
-GRADIO_HOST  = os.getenv("GRADIO_HOST", "127.0.0.1")
+GRADIO_HOST  = os.getenv("GRADIO_HOST", "0.0.0.0")
 GRADIO_PORT  = int(os.getenv("GRADIO_PORT", "7860"))
-
-# Inactivity settings (seconds)
-WARN_AFTER_S    = int(os.getenv("SESSION_WARN_AFTER_S",  "120"))   # 2 min
-TIMEOUT_AFTER_S = int(os.getenv("SESSION_TIMEOUT_AFTER_S", "180")) # 3 min
 
 # ---------------------------------------------------------------------------
 # Per-session Gradio-side state (keyed by session_id)
@@ -46,32 +31,8 @@ _lock = threading.Lock()
 def _get_session(session_id: str) -> dict:
     with _lock:
         if session_id not in _sessions:
-            _sessions[session_id] = {
-                "last_activity": time.time(),
-                "warned":        False,
-                "terminated":    False,
-                "history":       [],
-            }
+            _sessions[session_id] = {"terminated": False}
         return _sessions[session_id]
-
-
-def _touch(session_id: str):
-    with _lock:
-        if session_id in _sessions:
-            _sessions[session_id]["last_activity"] = time.time()
-            _sessions[session_id]["warned"]        = False
-
-
-def _reset_session(session_id: str):
-    """Clear Gradio-side session state AND backend memory."""
-    _clear_backend_session(session_id)
-    with _lock:
-        _sessions[session_id] = {
-            "last_activity": time.time(),
-            "warned":        False,
-            "terminated":    False,
-            "history":       [],
-        }
 
 
 def _clear_backend_session(session_id: str) -> None:
@@ -152,10 +113,8 @@ def chat(message: str, history: list, session_id: str):
     if not message.strip():
         return history, "", _status_text(session_id)
 
-    # ── Build enriched payload with recent context ─────────────────────
-    context_prefix = _build_context(sess["history"])
-    full_message   = f"{context_prefix}{message}" if context_prefix else message
-    payload        = {"message": full_message, "session_id": session_id}
+    # ── Build payload — MemorySaver handles conversation history ───────
+    payload = {"message": message, "session_id": session_id}
 
     try:
         response      = requests.post(API_URL, json=payload, timeout=30)
@@ -176,11 +135,6 @@ def chat(message: str, history: list, session_id: str):
                          f"(Error: {str(exc)[:80]})")
         task_complete = False
 
-    _touch(session_id)
-    sess["history"].append((message, bot_reply))
-    if len(sess["history"]) > 6:
-        sess["history"] = sess["history"][-6:]
-
     history = history + [(message, bot_reply)]
 
     # Show resolved banner only when the backend confirms the task is done
@@ -195,92 +149,12 @@ def chat(message: str, history: list, session_id: str):
     return history, "", _status_text(session_id)
 
 
-def _build_context(history: list) -> str:
-    if not history:
-        return ""
-    recent = history[-3:]
-    lines  = ["[Recent conversation for context:]"]
-    for user_msg, bot_msg in recent:
-        lines.append(f"Customer: {user_msg[:150]}")
-        lines.append(f"Agent: {bot_msg[:150]}")
-    lines.append("[Current message:]")
-    return "\n".join(lines) + "\n"
-
-
 def _status_text(session_id: str) -> str:
     if not session_id:
         return "❌ Not authenticated"
     sess = _get_session(session_id)
-    if sess["terminated"]:
-        return "🔴 Session ended"
-    idle      = int(time.time() - sess["last_activity"])
-    remaining = max(0, TIMEOUT_AFTER_S - idle)
-    if idle < WARN_AFTER_S:
-        return "🟢 Session active"
-    return f"🟡 Idle {idle}s — session closes in {remaining}s"
+    return "🔴 Session ended" if sess["terminated"] else "🟢 Session active"
 
-
-# ---------------------------------------------------------------------------
-# Inactivity checker — background thread
-# ---------------------------------------------------------------------------
-def _inactivity_checker():
-    while True:
-        time.sleep(15)
-        now = time.time()
-        with _lock:
-            for sid, sess in list(_sessions.items()):
-                if sess["terminated"]:
-                    continue
-                idle = now - sess["last_activity"]
-                if idle >= TIMEOUT_AFTER_S:
-                    sess["terminated"] = True
-                    # Clear backend memory when session times out
-                    threading.Thread(
-                        target=_clear_backend_session, args=(sid,), daemon=True
-                    ).start()
-                elif idle >= WARN_AFTER_S and not sess["warned"]:
-                    sess["warned"]  = True
-                    warn_mins = int((TIMEOUT_AFTER_S - idle) / 60) + 1
-                    sess["history"].append((
-                        None,
-                        f"⚠️ **Inactivity detected.** Your session will be "
-                        f"automatically closed in approximately **{warn_mins} minute(s)**. "
-                        f"Send a message to stay connected, or type **exit** if you're done.",
-                    ))
-
-
-threading.Thread(target=_inactivity_checker, daemon=True).start()
-
-
-# ---------------------------------------------------------------------------
-# Inactivity poll — Gradio timer
-# ---------------------------------------------------------------------------
-def poll_inactivity(history: list, session_id: str):
-    if not session_id:
-        return history, "❌ Not authenticated"
-
-    sess = _get_session(session_id)
-
-    new_messages = [
-        turn for turn in sess["history"]
-        if turn[0] is None and turn not in history
-    ]
-    if new_messages:
-        history = history + new_messages
-
-    if sess["terminated"] and not any(
-        "session has been closed" in (t[1] or "") or "automatically closed" in (t[1] or "")
-        for t in history
-    ):
-        idle = int(time.time() - sess["last_activity"])
-        history = history + [(
-            None,
-            f"🔴 **Your session has been automatically closed** after "
-            f"{idle // 60} minute(s) of inactivity. "
-            f"Click **New Session** to start again. Thank you for using AtlasCare!",
-        )]
-
-    return history, _status_text(session_id)
 
 
 # ---------------------------------------------------------------------------
@@ -345,10 +219,6 @@ with gr.Blocks(title="AtlasCare Customer Support", theme=gr.themes.Soft()) as de
             clear_btn       = gr.Button("🗑 Clear Chat", scale=1)
             new_session_btn = gr.Button("🔄 New Session", scale=1)
 
-        gr.Markdown(
-            "_Session auto-closes after 3 minutes of inactivity. "
-            "You'll receive a warning at 2 minutes._",
-        )
 
     # ── EVENT HANDLERS ────────────────────────────────────────────────────
 
@@ -468,16 +338,10 @@ with gr.Blocks(title="AtlasCare Customer Support", theme=gr.themes.Soft()) as de
         outputs=[chatbot, message_box, status_box, session_id_state],
     )
 
-    demo.load(
-        fn=poll_inactivity,
-        inputs=[chatbot, session_id_state],
-        outputs=[chatbot, status_box],
-        every=10,
-    )
 
 
 if __name__ == "__main__":
-    print(f"AtlasCare Customer UI → http://{GRADIO_HOST}:{GRADIO_PORT}")
+    print(f"AtlasCare Customer UI -> http://{GRADIO_HOST}:{GRADIO_PORT}")
     demo.launch(
         server_name=GRADIO_HOST,
         server_port=GRADIO_PORT,

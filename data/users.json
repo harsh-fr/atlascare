@@ -10,18 +10,26 @@
     },
     {
       "user_id": "USER-002",
-      "username": "rahul",
-      "email": "rahul.verma@email.com",
-      "password_hash": "93ca107abfabe99f54b5c4ad7dcafd9baee7350477039e9eecb53087189f988e",
+      "username": "arjun",
+      "email": "arjun.mehta@email.com",
+      "password_hash": "5e884898da28047151d0e56f8dc6292773603d0d6aabbdd62a11ef721d1542d8",
       "customer_id": "CUST-002",
       "created_at": "2025-01-01T00:00:00Z"
     },
     {
       "user_id": "USER-003",
-      "username": "karan",
-      "email": "karan.mehta@email.com",
-      "password_hash": "5d5e1bc3e056435dae6ed98692b4b34b78a0bf36ad3dcab93135a8a1f263ff4e",
+      "username": "divya",
+      "email": "divya.nair@email.com",
+      "password_hash": "5e884898da28047151d0e56f8dc6292773603d0d6aabbdd62a11ef721d1542d8",
       "customer_id": "CUST-003",
+      "created_at": "2025-01-01T00:00:00Z"
+    },
+    {
+      "user_id": "USER-004",
+      "username": "rahul",
+      "email": "rahul.gupta@email.com",
+      "password_hash": "5e884898da28047151d0e56f8dc6292773603d0d6aabbdd62a11ef721d1542d8",
+      "customer_id": "CUST-004",
       "created_at": "2025-01-01T00:00:00Z"
     }
   ]
