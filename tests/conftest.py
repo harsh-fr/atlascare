@@ -119,6 +119,16 @@ def make_text_mock(
     return completion
 
 
+def make_approved_mock() -> MagicMock:
+    """Evaluator LLM response that approves the generated reply."""
+    return make_text_mock("APPROVED")
+
+
+def make_rejected_mock(feedback: str = "Response omitted key details.") -> MagicMock:
+    """Evaluator LLM response that rejects the generated reply with feedback."""
+    return make_text_mock(f"REJECTED: {feedback}")
+
+
 # ---------------------------------------------------------------------------
 # Synthetic data builders
 # ---------------------------------------------------------------------------

@@ -11,6 +11,7 @@ from unittest.mock import patch, AsyncMock, MagicMock
 from fastapi.testclient import TestClient
 from tests.conftest import (
     make_tool_mock, make_multi_tool_mock, make_done_mock, make_text_mock,
+    make_approved_mock,
 )
 
 
@@ -52,6 +53,7 @@ def _j2_responses(text="Done."):
             ("update_address", {"order_id": "ORD-78321", "address_label": "office"}),
         ]),
         make_text_mock(text),
+        make_approved_mock(),   # evaluator runs for mutation requests
     ]
 
 

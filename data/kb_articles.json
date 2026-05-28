@@ -2,19 +2,16 @@
   "articles": [
     {
       "article_id": "KB-001",
-      "title": "Return and Refund Policy",
+      "title": "Refund Policy and Threshold Rules",
       "tags": [
-        "return",
         "refund",
-        "cancel",
-        "cancellation",
-        "delivered",
-        "undelivered",
-        "policy",
-        "money back"
+        "threshold",
+        "payments",
+        "escalation",
+        "return"
       ],
-      "content": "At Acme Retail, 'return' and 'refund' are the same thing — we want to make it right for you. The process depends on your order's delivery status.\n\nFor orders NOT yet delivered (status: placed or processing):\nWe cancel the order and issue a full refund. Refunds up to ₹25,000 are processed automatically within 5 business days to your original payment method. Refund requests above ₹25,000 are escalated to a specialist who contacts you within 24 hours.\n\nFor DELIVERED orders:\nWe initiate a return pickup at your delivery address at no cost to you. Once the pickup is confirmed, your refund is processed within 2 business days. Return requests for items above ₹25,000 in value must be reviewed by a specialist — a priority case is created and you'll hear from a specialist within 24 hours.",
-      "last_updated": "2026-01-15",
+      "content": "Acme Retail processes refunds automatically for amounts up to Rs.25,000 via the Payments Gateway. Refund requests exceeding Rs.25,000 must be escalated to a human specialist via the CRM. The specialist team has a 24-hour response SLA. Customers must raise refund requests within 30 days of delivery. The boundary is strictly greater than Rs.25,000 — orders of exactly Rs.25,000 are eligible for auto-refund.",
+      "last_updated": "2026-04-01",
       "applies_to": [
         "electronics",
         "apparel",
@@ -23,19 +20,16 @@
     },
     {
       "article_id": "KB-002",
-      "title": "Return Eligibility and Time Window",
+      "title": "Return Window Policy",
       "tags": [
         "return",
-        "refund",
         "window",
-        "eligibility",
+        "policy",
         "days",
-        "electronics",
-        "apparel",
-        "condition"
+        "eligible"
       ],
-      "content": "Return requests must be raised within the following windows from the date of delivery:\n\n- Electronics: 7 days\n- Apparel, home goods, and accessories: 30 days\n\nTo be eligible, items must be unused, undamaged, and in their original packaging with all accessories and tags intact. Damaged, used, or tampered items may not qualify for a full refund. Digital downloads and personalised/customised items are non-returnable.",
-      "last_updated": "2026-01-15",
+      "content": "Customers may return items within 30 days of delivery. Electronics are eligible for return within 7 days. Items must be unused and in original packaging. For orders in 'placed' or 'processing' status, use the cancellation flow instead. For shipped or delivered orders, a return/pickup will be arranged.",
+      "last_updated": "2026-03-15",
       "applies_to": [
         "electronics",
         "apparel",
@@ -44,19 +38,16 @@
     },
     {
       "article_id": "KB-003",
-      "title": "High-Value Returns and Escalations (Above ₹25,000)",
+      "title": "Escalation SLA and Specialist Response Times",
       "tags": [
         "escalation",
-        "high-value",
+        "sla",
         "specialist",
-        "return",
-        "refund",
-        "threshold",
-        "25000",
-        "priority"
+        "response",
+        "24-hour"
       ],
-      "content": "Return and refund requests for orders or items valued above ₹25,000 require specialist review — this applies to both undelivered and delivered orders.\n\nFor undelivered orders above ₹25,000:\nA high-priority CRM case is created. A specialist reviews and processes the cancellation and refund within 24 hours.\n\nFor delivered orders above ₹25,000:\nA specialist coordinates the return pickup and processes the refund after the item is received and inspected. Expected resolution is within 2 business days of confirmed pickup.\n\nIn all escalated cases, a specialist is assigned within 2 hours and the customer receives progress updates at their registered email address.",
-      "last_updated": "2026-01-15",
+      "content": "Escalated cases are assigned to a specialist within 2 hours. Specialists respond within 24 hours. High-priority cases (above Rs.25,000, damaged goods, fraud, or legal action) are handled first. Customers will receive an email confirmation once a case is opened.",
+      "last_updated": "2026-04-10",
       "applies_to": [
         "electronics",
         "apparel",
@@ -65,19 +56,17 @@
     },
     {
       "article_id": "KB-004",
-      "title": "Order Cancellation and Address Update Policy",
+      "title": "Partial Cancellation and Address Update Rules",
       "tags": [
         "cancel",
         "cancellation",
         "partial",
-        "address",
-        "update",
         "reship",
-        "placed",
-        "processing"
+        "address",
+        "update"
       ],
-      "content": "Orders in 'placed' or 'processing' status can be cancelled — either individual line items or the full order. A refund is automatically issued for cancelled items.\n\nOnce an order is shipped or delivered it cannot be cancelled. For those orders, please request a return instead — the process is the same outcome.\n\nAddress changes are allowed for orders that have not yet been dispatched (status: placed or processing). Once an order is marked as shipped, the delivery address cannot be changed.",
-      "last_updated": "2026-01-15",
+      "content": "Customers may cancel individual line items from orders in 'placed' or 'processing' status. Shipped or delivered orders require a return request — cancellation is not possible once dispatched. Address updates are allowed only for orders not yet shipped (placed or processing). Once an order is shipped, the address cannot be changed.",
+      "last_updated": "2026-04-05",
       "applies_to": [
         "electronics",
         "apparel",
@@ -86,20 +75,17 @@
     },
     {
       "article_id": "KB-005",
-      "title": "Refund Timelines and Supported Payment Methods",
+      "title": "Payment Methods and Refund Processing Times",
       "tags": [
-        "refund",
         "payment",
-        "timeline",
-        "processing",
-        "days",
+        "refund",
         "methods",
         "sla",
-        "upi",
-        "bank"
+        "days",
+        "processing"
       ],
-      "content": "Refunds are issued to the original payment method by default. Customers may request a refund to a different supported method if needed.\n\nSupported refund methods: HDFC Credit Card, ICICI Debit Card, SBI Net Banking, UPI (GPay, PhonePe, Paytm).\n\nRefund timelines:\n- Auto-processed refunds for cancelled orders (up to ₹25,000): 5 business days\n- Refunds after return pickup confirmation: 2 business days\n- Specialist-reviewed refunds (above ₹25,000): up to 2 business days after specialist approval\n\nYou will receive an email confirmation when the refund is initiated. Bank processing times may add 1–2 additional business days depending on your bank.",
-      "last_updated": "2026-01-15",
+      "content": "Supported refund methods: HDFC Credit Card, ICICI Debit Card, SBI Net Banking, UPI (GPay, PhonePe, Paytm all map to UPI), and original payment method. Refunds reflect within 5 business days of initiation. COD orders cannot be refunded via cash — an electronic method must be provided.",
+      "last_updated": "2026-03-20",
       "applies_to": [
         "electronics",
         "apparel",
@@ -108,18 +94,34 @@
     },
     {
       "article_id": "KB-006",
-      "title": "Cash on Delivery (COD) Orders — Cancellation and Refund",
+      "title": "Cash on Delivery (COD) Refund Policy",
       "tags": [
         "cod",
-        "cash on delivery",
+        "cash",
+        "delivery",
         "refund",
-        "cancel",
-        "return",
-        "payment",
-        "methods"
+        "electronic"
       ],
-      "content": "Cash on Delivery (COD) orders follow a slightly different process for cancellations and refunds:\n\nFor COD orders NOT yet delivered (placed or processing):\nThe order can be cancelled at no charge. Since payment has not yet been collected, no refund is required — you simply will not be charged on delivery.\n\nFor COD orders that ARE delivered:\nSince the payment was made in cash at the door, refunds cannot be sent back as cash. You must provide an electronic refund method:\n- UPI (GPay, PhonePe, Paytm)\n- HDFC Credit Card\n- ICICI Debit Card\n- SBI Net Banking\n\nOnce a return pickup is confirmed, the refund is processed to your chosen electronic method within 5 business days.\n\nFor COD orders above ₹25,000:\nHigh-value COD refunds require specialist review. A priority case is raised and a specialist contacts you within 24 hours to coordinate the return pickup and electronic refund.",
-      "last_updated": "2026-01-15",
+      "content": "For Cash on Delivery orders that are cancelled before dispatch, no refund is needed as payment was never collected. For delivered COD orders being returned, the refund CANNOT be issued as cash. Customers must provide an electronic refund method: UPI (GPay, PhonePe, Paytm), HDFC Credit Card, ICICI Debit Card, or SBI Net Banking. Asking to refund 'the same way' or 'in cash' for a COD order is not accepted — the agent must prompt for a valid electronic method. High-value COD returns above Rs.25,000 follow the standard escalation path.",
+      "last_updated": "2026-04-15",
+      "applies_to": [
+        "electronics",
+        "apparel",
+        "home_goods"
+      ]
+    },
+    {
+      "article_id": "KB-007",
+      "title": "Fraud and Unauthorized Orders",
+      "tags": [
+        "fraud",
+        "unauthorized",
+        "security",
+        "account",
+        "escalation"
+      ],
+      "content": "If a customer reports an order they did not place, or suspects their account has been accessed without authorization, this is treated as a high-priority security escalation. The agent must: (1) create a CRM escalation case with priority HIGH, (2) NOT take any other action on the order (no cancellation, no refund), (3) advise the customer to change their password immediately, and (4) inform them that the security team will respond within 24 hours. Phrases like 'I never placed this', 'I did not order this', 'someone else ordered this', or 'my account was hacked' all trigger this flow.",
+      "last_updated": "2026-04-20",
       "applies_to": [
         "electronics",
         "apparel",

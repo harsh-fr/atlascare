@@ -128,6 +128,12 @@ async def query(request: QueryRequest, http_request: Request) -> QueryResponse:
             "tool_call_count":   0,
             "final_response":    "",
             "task_complete":     False,
+            # eval fields reset each turn
+            "eval_retry_count":  0,
+            "eval_feedback":     "",
+            "eval_approved":     False,
+            # pending_action and awaiting_confirmation intentionally omitted —
+            # they persist across turns via MemorySaver checkpointer
         }
         config = {"configurable": {"thread_id": request.session_id, "tracer": tracer}}
         try:

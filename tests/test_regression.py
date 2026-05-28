@@ -7,7 +7,7 @@ Regression tests covering all recent fixes.
 import asyncio
 import pytest
 from unittest.mock import patch, AsyncMock, MagicMock
-from tests.conftest import make_tool_mock, make_done_mock, make_text_mock
+from tests.conftest import make_tool_mock, make_done_mock, make_text_mock, make_approved_mock
 
 
 # ---------------------------------------------------------------------------
@@ -198,8 +198,12 @@ class TestVagueHelpDetection:
         "can you help me",
     ])
     def test_vague_message_returns_graceful_prompt(self, client, msg):
+        # 2 mocks: tool_agent (no tools) + responder.
+        # "need help with my order" hits the pre-guardrail ambiguous-query check
+        # and never calls tool_agent, so both mocks stay unconsumed — that's fine.
         responses = [
-            make_done_mock("I need your order ID to help you."),
+            make_done_mock(""),
+            make_text_mock("I need your order ID to help you. Please share it."),
         ]
         mock_client = MagicMock()
         mock_client.chat.completions.create = AsyncMock(side_effect=responses)
@@ -250,6 +254,7 @@ class TestRefundWithAmount:
                 "order_id": "ORD-78400", "amount_inr": 24999.0, "method": "original",
             }),
             make_text_mock("Your refund of ₹24,999 has been initiated."),
+            make_approved_mock(),
         ])
         rc = [tc for tc in body["trace"]["tool_calls"] if tc["action"] == "process_refund"]
         assert rc and rc[0]["status"] == "success"

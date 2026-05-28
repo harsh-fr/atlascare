@@ -9,7 +9,7 @@ import json
 import re
 import pytest
 from unittest.mock import patch, AsyncMock, MagicMock
-from tests.conftest import make_tool_mock, make_done_mock, make_text_mock, _make_order
+from tests.conftest import make_tool_mock, make_done_mock, make_text_mock, make_approved_mock, _make_order
 
 
 # ---------------------------------------------------------------------------
@@ -60,6 +60,7 @@ class TestInvalidOrderInputs:
         body = _run(client, "Cancel item 99 from ORD-78321.", [
             make_tool_mock("cancel_item", {"order_id": "ORD-78321", "line_id": 99}),
             make_text_mock("That item doesn't exist."),
+            make_approved_mock(),
         ])
         cc = [tc for tc in body["trace"]["tool_calls"] if tc["action"] == "cancel_item"]
         assert cc and cc[0]["status"] == "error"
@@ -85,6 +86,7 @@ class TestInvalidOrderInputs:
         mock_client.chat.completions.create = AsyncMock(side_effect=[
             make_tool_mock("cancel_item", {"order_id": "ORD-78321", "line_id": 1}),
             make_text_mock("That item is already cancelled."),
+            make_approved_mock(),
         ])
         with patch("agent.graph._groq_client", mock_client):
             with patch.object(OrderRepository, "find_by_id", patched_find):
@@ -103,6 +105,7 @@ class TestInvalidOrderInputs:
         body = _run(client, "Cancel item 1 from ORD-78322.", [
             make_tool_mock("cancel_item", {"order_id": "ORD-78322", "line_id": 1}),
             make_text_mock("That order is shipped and cannot be cancelled."),
+            make_approved_mock(),
         ])
         cc = [tc for tc in body["trace"]["tool_calls"] if tc["action"] == "cancel_item"]
         assert cc and cc[0]["status"] == "error"
@@ -111,6 +114,7 @@ class TestInvalidOrderInputs:
         body = _run(client, "Cancel item 1 from ORD-78323.", [
             make_tool_mock("cancel_item", {"order_id": "ORD-78323", "line_id": 1}),
             make_text_mock("That order is delivered and cannot be cancelled."),
+            make_approved_mock(),
         ])
         cc = [tc for tc in body["trace"]["tool_calls"] if tc["action"] == "cancel_item"]
         assert cc and cc[0]["status"] == "error"
