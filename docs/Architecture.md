@@ -54,7 +54,7 @@ repo    repo   repo     repo
 | Step | Node | Model | What happens |
 |------|------|-------|--------------|
 | 1 | main.py | — | `session_id` → `customer_id` via SessionStore |
-| 2 | `pre_guardrail` | — (code) | GR-001/002/003 checks; order ID format validation |
+| 2 | `pre_guardrail` | — (code) | GR-001/002/003 checks; order ID format validation; history-aware ambiguous-query check |
 | 3 | `tool_agent` | **Llama 3.3 70B** (complex) or **8B** (simple) | Selects tools to call, or writes a direct reply |
 | 4 | `tool_executor` | — (code) | Dispatches each tool call with ownership validation |
 | 5 | `post_guardrail` | — (code) | GR-004: verifies no payment on escalation case |
@@ -114,6 +114,7 @@ Three independent layers enforce the Rs.25,000 threshold:
 - GR-002: Empty message → reject
 - GR-003: Message > 2,000 chars → reject (prompt injection defence)
 - GR-004: Payment success + escalation case in same turn → critical block
+- AQ: Ambiguous order reference ("my order", "the order", etc.) with no `ORD-XXXXX` in the current message → prompt the customer for their order ID. **Bypassed** when a valid order ID already appears anywhere in the conversation history, so follow-up questions in multi-turn sessions pass through correctly.
 
 ---
 

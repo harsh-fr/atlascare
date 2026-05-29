@@ -1,15 +1,10 @@
-"""
-repositories/user_repository.py
-================================
-User credential storage — separate from CRM customer data.
-"""
-
 import json
 import logging
 import os
 import threading
-from pathlib import Path
 from typing import Any
+
+from utils.file_ops import atomic_json_write
 
 logger = logging.getLogger(__name__)
 
@@ -28,26 +23,21 @@ class UserRepository:
         self._lock = threading.Lock()
         logger.debug("UserRepository init | path=%s", self._path)
 
-    # ── Reads ────────────────────────────────────────────────────────────
+    def _find_by_field(self, field: str, value: str) -> dict[str, Any] | None:
+        value_lower = value.lower()
+        for user in self._load().get("users", []):
+            if user.get(field, "").lower() == value_lower:
+                return user
+        return None
 
     def get_by_username(self, username: str) -> dict[str, Any] | None:
-        data = self._load()
-        for user in data.get("users", []):
-            if user.get("username", "").lower() == username.lower():
-                return user
-        return None
+        return self._find_by_field("username", username)
 
     def get_by_email(self, email: str) -> dict[str, Any] | None:
-        data = self._load()
-        for user in data.get("users", []):
-            if user.get("email", "").lower() == email.lower():
-                return user
-        return None
+        return self._find_by_field("email", email)
 
     def username_exists(self, username: str) -> bool:
         return self.get_by_username(username) is not None
-
-    # ── Writes ───────────────────────────────────────────────────────────
 
     def create(self, user: dict[str, Any]) -> bool:
         with self._lock:
@@ -66,8 +56,6 @@ class UserRepository:
                     return True
         return False
 
-    # ── Private ──────────────────────────────────────────────────────────
-
     def _load(self) -> dict[str, Any]:
         try:
             with open(self._path, "r", encoding="utf-8") as fh:
@@ -79,7 +67,4 @@ class UserRepository:
             return {"users": []}
 
     def _save(self, data: dict[str, Any]) -> None:
-        tmp = self._path + ".tmp"
-        with open(tmp, "w", encoding="utf-8") as fh:
-            json.dump(data, fh, indent=2, ensure_ascii=False)
-        Path(tmp).replace(self._path)
+        atomic_json_write(self._path, data)

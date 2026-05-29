@@ -15,15 +15,17 @@ Customer Gradio UI runs on 7860.
 
 import os
 import json
-import time
 import base64
+import pandas as pd
 from pathlib import Path
 from datetime import datetime, timezone
-from collections import defaultdict
 
 import requests as _requests
 import gradio as gr
 from dotenv import load_dotenv
+
+from repositories.order_repository import OrderRepository
+from repositories.audit_repository import AuditRepository
 
 load_dotenv()
 
@@ -230,6 +232,137 @@ def _fmt_trace_detail(trace_id: str) -> str:
 
 
 # ---------------------------------------------------------------------------
+# Orders & Audit Trace helpers (direct repo access)
+# ---------------------------------------------------------------------------
+
+_STATUS_EMOJI = {
+    "placed":     "🟡 Placed",
+    "processing": "🔵 Processing",
+    "shipped":    "🚚 Shipped",
+    "delivered":  "✅ Delivered",
+    "cancelled":  "❌ Cancelled",
+}
+_METHOD_LABELS = {
+    "HDFC_CREDIT":    "HDFC Credit",
+    "ICICI_DEBIT":    "ICICI Debit",
+    "SBI_NETBANKING": "SBI NetBanking",
+    "UPI":            "UPI",
+    "COD":            "COD",
+}
+_ACTION_LABELS = {
+    "item_cancelled":     "🗑 Item Cancelled",
+    "refund_processed":   "💸 Refund",
+    "address_updated":    "📍 Address Updated",
+    "escalation_created": "🚨 Escalation",
+}
+
+
+def _fmt_inr(amount) -> str:
+    try:
+        return f"₹{float(amount):,.0f}"
+    except (TypeError, ValueError):
+        return "—"
+
+
+def _fmt_ts(ts: str) -> str:
+    try:
+        return datetime.fromisoformat(ts).strftime("%d %b %Y  %H:%M")
+    except Exception:
+        return ts or "—"
+
+
+def _audit_row_detail(action: str, data: dict) -> str:
+    if action == "item_cancelled":
+        line = f"{data.get('item_name','?')} × {data.get('quantity',1)} @ {_fmt_inr(data.get('unit_price',0))}"
+        if data.get("refund_id"):
+            line += f"  |  Refund {_fmt_inr(data.get('refund_amount',0))} → {data.get('refund_method','?')}"
+        return line
+    if action == "refund_processed":
+        note = " (escalated)" if data.get("escalated") else ""
+        case = f"  |  Case {data['case_id']}" if data.get("case_id") else ""
+        return f"{_fmt_inr(data.get('amount_inr',0))} → {data.get('method','?')}{note}{case}"
+    if action == "address_updated":
+        addr  = data.get("new_address") or {}
+        label = f" [{data['address_label']}]" if data.get("address_label") else ""
+        return f"{addr.get('line1','')}, {addr.get('city','')} {addr.get('pincode','')}{label}"
+    if action == "escalation_created":
+        reason  = data.get("reason", "")
+        snippet = reason[:70] + ("…" if len(reason) > 70 else "")
+        return f"Case {data.get('case_id','?')}  |  {snippet}"
+    return str(data)
+
+
+def _customer_choices() -> list[str]:
+    customers = sorted({
+        o.get("customer_id", "")
+        for o in OrderRepository().list_all()
+        if o.get("customer_id")
+    })
+    return ["All"] + customers
+
+
+def load_orders(customer_filter: str = "All", status_filter: str = "All") -> pd.DataFrame:
+    audit_counts: dict[str, int] = {}
+    for evt in AuditRepository().list_all():
+        oid = evt.get("order_id", "")
+        audit_counts[oid] = audit_counts.get(oid, 0) + 1
+
+    rows = []
+    for o in OrderRepository().list_all():
+        cid    = o.get("customer_id", "")
+        status = o.get("status", "")
+        if customer_filter != "All" and cid != customer_filter:
+            continue
+        if status_filter != "All" and status != status_filter:
+            continue
+        items    = o.get("items", [])
+        n_active = sum(1 for i in items if i.get("status") == "active")
+        n_cancel = sum(1 for i in items if i.get("status") == "cancelled")
+        oid      = o.get("order_id", "")
+        rows.append({
+            "Order ID":      oid,
+            "Customer":      cid,
+            "Status":        _STATUS_EMOJI.get(status, status),
+            "Created":       _fmt_ts(o.get("created_at", "")),
+            "Est. Delivery": o.get("estimated_delivery", "—"),
+            "Items":         f"{n_active} active" + (f", {n_cancel} cancelled" if n_cancel else ""),
+            "Total":         _fmt_inr(o.get("total_amount", 0)),
+            "Payment":       _METHOD_LABELS.get(o.get("payment_method", ""), o.get("payment_method", "")),
+            "Agent Actions": f"🔔 {audit_counts[oid]}" if audit_counts.get(oid) else "—",
+        })
+
+    if not rows:
+        return pd.DataFrame(columns=[
+            "Order ID", "Customer", "Status", "Created", "Est. Delivery",
+            "Items", "Total", "Payment", "Agent Actions",
+        ])
+    return pd.DataFrame(rows).sort_values("Created", ascending=False).reset_index(drop=True)
+
+
+def load_audit_table(customer_filter: str = "All", action_filter: str = "All") -> pd.DataFrame:
+    rows = []
+    for evt in AuditRepository().list_all():
+        cid    = evt.get("customer_id", "")
+        action = evt.get("action", "")
+        if customer_filter != "All" and cid != customer_filter:
+            continue
+        if action_filter != "All" and action != action_filter:
+            continue
+        rows.append({
+            "Timestamp": _fmt_ts(evt.get("timestamp", "")),
+            "Customer":  cid,
+            "Order ID":  evt.get("order_id", ""),
+            "Action":    _ACTION_LABELS.get(action, action),
+            "Details":   _audit_row_detail(action, evt.get("data", {})),
+            "Event ID":  evt.get("event_id", ""),
+        })
+
+    if not rows:
+        return pd.DataFrame(columns=["Timestamp", "Customer", "Order ID", "Action", "Details", "Event ID"])
+    return pd.DataFrame(rows).sort_values("Timestamp", ascending=False).reset_index(drop=True)
+
+
+# ---------------------------------------------------------------------------
 # Gradio UI
 # ---------------------------------------------------------------------------
 
@@ -329,6 +462,56 @@ with gr.Blocks(title="AtlasCare Admin", theme=gr.themes.Soft()) as dashboard:
 
             graph_display = gr.HTML(_graph_html())
             gr.Button("🔄 Refresh Graph").click(fn=_graph_html, outputs=graph_display)
+
+        # ── Orders ────────────────────────────────────────────────────────
+        with gr.Tab("📦 Orders"):
+            with gr.Row():
+                o_customer_dd = gr.Dropdown(
+                    choices=_customer_choices(), value="All",
+                    label="Customer", scale=2,
+                )
+                o_status_dd = gr.Dropdown(
+                    choices=["All", "placed", "processing", "shipped",
+                             "delivered", "cancelled"],
+                    value="All", label="Status", scale=2,
+                )
+                o_refresh_btn = gr.Button("🔄 Refresh", scale=1, variant="secondary")
+
+            o_table = gr.Dataframe(
+                value=load_orders(),
+                interactive=False,
+                wrap=True,
+                column_widths=["10%", "10%", "11%", "13%", "10%", "14%", "8%", "11%", "13%"],
+            )
+
+            o_customer_dd.change(load_orders, [o_customer_dd, o_status_dd], o_table)
+            o_status_dd.change(load_orders, [o_customer_dd, o_status_dd], o_table)
+            o_refresh_btn.click(load_orders, [o_customer_dd, o_status_dd], o_table)
+
+        # ── Agent Audit Traces ─────────────────────────────────────────────
+        with gr.Tab("🗒️ Audit Traces"):
+            with gr.Row():
+                a_customer_dd = gr.Dropdown(
+                    choices=_customer_choices(), value="All",
+                    label="Customer", scale=2,
+                )
+                a_action_dd = gr.Dropdown(
+                    choices=["All", "item_cancelled", "refund_processed",
+                             "address_updated", "escalation_created"],
+                    value="All", label="Action", scale=2,
+                )
+                a_refresh_btn = gr.Button("🔄 Refresh", scale=1, variant="secondary")
+
+            a_table = gr.Dataframe(
+                value=load_audit_table(),
+                interactive=False,
+                wrap=True,
+                column_widths=["14%", "10%", "10%", "16%", "38%", "12%"],
+            )
+
+            a_customer_dd.change(load_audit_table, [a_customer_dd, a_action_dd], a_table)
+            a_action_dd.change(load_audit_table, [a_customer_dd, a_action_dd], a_table)
+            a_refresh_btn.click(load_audit_table, [a_customer_dd, a_action_dd], a_table)
 
         # ── Raw JSON viewer ───────────────────────────────────────────────
         with gr.Tab("📁 Raw Data"):

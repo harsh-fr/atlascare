@@ -36,7 +36,7 @@ All tests are deterministic — LLM calls are mocked with fixed JSON plans. Test
 | J3: pre-guardrail blocks | GR-001 fires before LLM |
 | J3: case_id schema | Pattern conformance |
 
-### 2.2 Guardrail Tests (`test_guardrails.py`) — 42 tests
+### 2.2 Guardrail Tests (`test_guardrails.py`) — 45 tests
 
 - `_extract_amounts`: all currency formats (₹, Rs., INR, rupees, comma-separated)
 - GR-001: boundary values (24999/25000/25001), no-keyword bypass, multi-amount
@@ -47,6 +47,9 @@ All tests are deterministic — LLM calls are mocked with fixed JSON plans. Test
 - GR-004: all four combinations of payment+escalation
 - PaymentTool: independently blocks ₹25,001, allows ₹25,000, rejects zero, rejects bad method
 - HTTP: blocked request returns 200 with trace, non-empty response
+- AQ: ambiguous query with no conversation history → blocked, prompts for order ID
+- AQ: ambiguous follow-up ("what about the delivery date?") after user provided ORD-XXXXX in prior turn → not blocked, passes through to tool agent
+- AQ: ambiguous follow-up where order ID appears only in a tool result message → not blocked
 
 ### 2.3 Security Tests (`test_security.py`) — 35 tests
 

@@ -22,6 +22,7 @@
 | J2 step completion rate | > 95% all steps succeed | successful_steps / planned_steps |
 | Planner parse success rate | > 99% valid JSON plans | (total - PlannerError) / total |
 | Refund amount accuracy | 100% — Decimal arithmetic, no float errors | Audit refund records vs order totals |
+| Ambiguous-query false-positive rate | < 2% — valid follow-up turns incorrectly blocked | guardrail_blocked events on turns where order ID exists in prior history |
 
 ---
 

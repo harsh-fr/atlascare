@@ -83,7 +83,6 @@ async def unhandled_exception_handler(request: Request, exc: Exception):
         content={"detail": "An internal error occurred. Please try again later."},
     )
 
-# health route
 @app.get("/health", status_code=status.HTTP_200_OK, summary="Liveness probe", tags=["ops"])
 async def health():
     return {"status": "ok"}
@@ -128,7 +127,6 @@ async def query(request: QueryRequest, http_request: Request) -> QueryResponse:
             "tool_call_count":   0,
             "final_response":    "",
             "task_complete":     False,
-            # eval fields reset each turn
             "eval_retry_count":  0,
             "eval_feedback":     "",
             "eval_approved":     False,
@@ -193,9 +191,9 @@ async def query(request: QueryRequest, http_request: Request) -> QueryResponse:
     )
 
 
-# ---------------------------------------------------------------------------
-# Admin read endpoints
-# ---------------------------------------------------------------------------
+
+
+
 @app.get("/admin/traces", status_code=status.HTTP_200_OK, tags=["admin"])
 async def admin_traces(http_request: Request):
     return http_request.app.state.trace_store.get_all()
@@ -206,9 +204,9 @@ async def admin_kpis(http_request: Request):
     return http_request.app.state.trace_store.kpi_summary()
 
 
-# ---------------------------------------------------------------------------
-# Cases endpoint
-# ---------------------------------------------------------------------------
+
+
+
 class _CreateCaseRequest(_BaseModel):
     order_id:    str
     reason:      str
@@ -232,24 +230,20 @@ async def create_case(body: _CreateCaseRequest, http_request: Request):
     return case
 
 
-# ---------------------------------------------------------------------------
-# KB search endpoint
-# ---------------------------------------------------------------------------
+
+
+
 @app.get("/kb/search", tags=["kb"], summary="Search knowledge base articles by tags")
 async def kb_search(tags: str, http_request: Request):
-    """
-    Search KB articles by comma-separated tags.
-    Example: GET /kb/search?tags=return,refund
-    """
     tag_list = [t.strip() for t in tags.split(",") if t.strip()]
     kb: KbTool = http_request.app.state.kb_tool
     articles = await kb.search(tags=tag_list)
     return {"articles": articles}
 
 
-# ---------------------------------------------------------------------------
-# Session cleanup
-# ---------------------------------------------------------------------------
+
+
+
 @app.delete(
     "/session/{session_id}",
     status_code=status.HTTP_200_OK,
@@ -266,9 +260,9 @@ async def delete_session(session_id: str, http_request: Request):
     return {"cleared": True}
 
 
-# ---------------------------------------------------------------------------
-# Auth models
-# ---------------------------------------------------------------------------
+
+
+
 class _LoginRequest(_BaseModel):
     username: str
     password: str
@@ -288,9 +282,9 @@ class _ResetPasswordRequest(_BaseModel):
     new_password: str
 
 
-# ---------------------------------------------------------------------------
-# Auth endpoints
-# ---------------------------------------------------------------------------
+
+
+
 @app.post("/auth/login", status_code=status.HTTP_200_OK, tags=["auth"])
 async def auth_login(body: _LoginRequest, http_request: Request):
     svc: AuthService = http_request.app.state.auth_service

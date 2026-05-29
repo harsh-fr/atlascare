@@ -14,9 +14,10 @@ from openai import AsyncOpenAI, BadRequestError
 from agent.guardrails import Guardrails
 from tools.oms_tool import OmsTool
 from tools.crm_tool import CrmTool
-from tools.payment_tool import PaymentTool
+from tools.payment_tool import PaymentTool, RefundThresholdError
 from tools.kb_tool import KbTool
 from observability.tracer import Tracer
+from repositories.audit_repository import AuditRepository
 
 logger = logging.getLogger(__name__)
 
@@ -25,6 +26,7 @@ _oms        = OmsTool()
 _crm        = CrmTool()
 _payment    = PaymentTool()
 _kb         = KbTool()
+_audit      = AuditRepository()
 
 
 class AtlasCareState(TypedDict):
@@ -43,7 +45,6 @@ class AtlasCareState(TypedDict):
     eval_approved:         bool
 
 
-#tools
 TOOLS = [
     {"type": "function", "function": {
         "name": "get_order",
@@ -63,7 +64,8 @@ TOOLS = [
             "Cancel a single line item. Only works for placed/processing orders. "
             "IMPORTANT: line_id is the integer 'line_id' field from the order's items array — "
             "it is NOT the item's position. Always call get_order first to look up the correct "
-            "line_id for the item the customer named before calling this tool."
+            "line_id for the item the customer named before calling this tool. "
+            "Pass refund_method if the customer requests a specific refund destination other than the original payment method."
         ),
         "parameters": {"type": "object", "required": ["order_id", "line_id"], "properties": {
             "order_id": {"type": "string"},
@@ -73,6 +75,11 @@ TOOLS = [
                     "The 'line_id' field of the specific item to cancel, taken from the "
                     "order's items array returned by get_order. Call get_order first."
                 ),
+            },
+            "refund_method": {
+                "type": "string",
+                "enum": ["HDFC_CREDIT", "ICICI_DEBIT", "SBI_NETBANKING", "UPI", "original"],
+                "description": "Override refund destination. Omit to refund to the original payment method.",
             },
         }},
     }},
@@ -95,12 +102,36 @@ TOOLS = [
         }},
     }},
     {"type": "function", "function": {
+        "name": "update_address_raw",
+        "description": (
+            "Update shipping address using a full address provided by the customer. "
+            "Use this after the customer supplies address details in response to being "
+            "told their requested label (e.g. 'office') is not saved in their profile."
+        ),
+        "parameters": {"type": "object", "required": ["order_id", "line1", "city", "state", "pincode"], "properties": {
+            "order_id": {"type": "string"},
+            "line1":    {"type": "string", "description": "Street address line"},
+            "city":     {"type": "string"},
+            "state":    {"type": "string"},
+            "pincode":  {"type": "string"},
+        }},
+    }},
+    {"type": "function", "function": {
         "name": "create_crm_case",
-        "description": "Create a support case in the CRM.",
+        "description": (
+            "Create a support case in the CRM. Use escalate instead for urgent matters "
+            "(fraud, legal threats, manager requests, account security). "
+            "Use priority='high' for damaged, defective, or counterfeit items."
+        ),
         "parameters": {"type": "object", "required": ["order_id", "reason"], "properties": {
             "order_id":   {"type": "string"},
             "reason":     {"type": "string"},
             "amount_inr": {"type": ["number", "null"]},
+            "priority":   {
+                "type": "string",
+                "enum": ["low", "medium", "high"],
+                "description": "Case priority. Use 'high' for damaged/defective/counterfeit items.",
+            },
         }},
     }},
     {"type": "function", "function": {
@@ -157,18 +188,49 @@ _AGENT_SYSTEM = (
     "Prefer calling all needed tools in a single response when possible.\n"
     "If you call tools, do NOT write a customer reply — the response is generated from tool results.\n"
     "If no tools are needed, write a direct, helpful reply to the customer.\n"
+    "NEVER write a planning narrative ('I will now cancel...', 'I am going to...', 'Let me proceed...'). "
+    "When a tool call is required, call it immediately — do not announce or explain what you are about to do.\n"
     "Always fetch actual order data via tools before acting or responding — "
     "never rely solely on details the customer provides about their order.\n"
+    # Bug 5: always use get_order when a specific order ID is present
+    "When the customer's message contains a specific order ID (format ORD-XXXXX), ALWAYS use "
+    "get_order to fetch that specific order — never use list_orders. "
+    "list_orders is only for browsing all orders when no specific order ID is given.\n"
     "When cancelling an item the customer refers to by name, you MUST call get_order first "
     "to find the correct line_id for that item. Never guess a line_id.\n"
     "For refunds, default method to 'original' unless the customer specifies otherwise.\n"
+    "For address updates: first try update_address with the label the customer mentioned. "
+    "If it fails because the label is not found, tell the customer which labels are available "
+    "and ask them to either use a saved label or provide the full address (street, city, state, pincode). "
+    "Once they supply the details, use update_address_raw to apply the address directly.\n"
     "'Return' and 'refund' mean the same thing — always look up the order and help the customer.\n"
-    "For COD (Cash on Delivery) orders: cash cannot be refunded electronically. "
-    "Always ask the customer for a preferred electronic method (UPI, credit card, debit card, net banking) "
-    "before calling process_refund on a COD order.\n"
+    # Bug 1: COD rule strengthened to code-level enforcement
+    "COD REFUND RULE (MANDATORY):\n"
+    "For any order with payment_method='COD':\n"
+    "  - NEVER call process_refund with method='original' — cash cannot be refunded electronically.\n"
+    "  - NEVER accept 'cash', 'same method', 'same payment method', or 'original' as a refund method.\n"
+    "  - If the customer requests a return/refund and has NOT provided a specific electronic method "
+    "(UPI, HDFC Credit Card, ICICI Debit Card, SBI Net Banking), ask for one BEFORE calling any tool.\n"
+    "  - Only proceed with cancel_item or process_refund once you have an explicit electronic method.\n"
+    # Bug 2: no re-call instruction
+    "LIST_ORDERS RE-CALL RULE: If list_orders results are already present in the conversation "
+    "context (i.e. a tool result with an 'orders' array has already been returned), do NOT call "
+    "list_orders again. Apply any filter criteria directly to the data you already have — the "
+    "response model will handle filtering. Calling list_orders a second time wastes a tool call "
+    "and produces no new data.\n"
     "When the customer asks to filter, search, or browse orders by ANY criteria (date, month, year, "
-    "status, amount, product name, or any combination) — always call list_orders to fetch all orders. "
+    "status, amount, product name, or any combination) — call list_orders once to fetch all orders. "
     "The response model will apply the customer's filter criteria to the results.\n"
+    # Bug 4: status cross-check
+    "STATUS CROSS-CHECK (MANDATORY): After fetching an order with get_order, compare the actual "
+    "order status in the data against any status the customer stated in their message. "
+    "If they conflict (e.g. customer says 'delivered' but status is 'shipped', or customer says "
+    "'not delivered' but status is 'delivered'), do NOT proceed with the action the customer "
+    "requested based on their stated status. Instead, call NO further tools and respond directly, "
+    "noting the discrepancy and explaining the correct next step based on the actual status. "
+    "Example: customer says 'my delivered order ORD-10003' but status is 'shipped' → "
+    "do not escalate or initiate a return; inform the customer the order is still in transit.\n"
+    # Bug 6: escalation rules — add damaged/defective items
     "ESCALATION RULES — immediately call the escalate tool (no other action) when the customer:\n"
     "  - Claims they did not place an order, or the order was placed without their knowledge or consent.\n"
     "  - Reports fraud, unauthorized account activity, or account compromise.\n"
@@ -176,16 +238,23 @@ _AGENT_SYSTEM = (
     "  - Threatens legal action, mentions consumer court, police, or regulatory bodies.\n"
     "  - Explicitly asks to speak to a manager or senior agent.\n"
     "  - Reports harassment or abusive behaviour.\n"
+    "  - Reports a delivered product that is damaged, defective, or counterfeit and wants a resolution.\n"
     "Do NOT cancel, refund, or take any other automated action in these cases — escalate only.\n"
+    "When creating a CRM case (not an escalation) for a damaged, defective, or counterfeit item, "
+    "always pass priority='high' to create_crm_case.\n"
     "CONFIRMATION RULE: Never generate a plain-text response asking the customer "
     "for confirmation (e.g. 'Are you sure?', 'Can you confirm?'). "
-    "Call request_confirmation ONLY when the item being cancelled has unit_price > 5000 "
-    "(strictly greater — ₹5,000 itself does NOT qualify), OR when the customer's description "
-    "ambiguously matches two or more items in the order. "
+    "Call request_confirmation ONLY when ALL of the following are true: "
+    "(1) the order status is 'placed' or 'processing' (cancellation is actually possible), AND "
+    "(2) the item being cancelled has unit_price > 5000 (strictly greater — ₹5,000 itself does NOT qualify), "
+    "OR the customer's description ambiguously matches two or more items in the order. "
+    "If the order status is 'shipped', 'delivered', or 'cancelled', do NOT call request_confirmation — "
+    "call cancel_item directly. The tool enforces business rules and will return the appropriate error. "
     "In every other case — including all refunds, address updates, and any item priced ₹5,000 or below — "
     "execute the action immediately without asking. "
     "Example: 'Laundry Mesh Bag' at ₹200 → cancel immediately. "
-    "'Dell Laptop' at ₹55,000 → call request_confirmation first.\n"
+    "'Dell Laptop' at ₹55,000 in a placed order → call request_confirmation first. "
+    "'Dell Laptop' at ₹55,000 in a shipped order → call cancel_item directly (will fail with error).\n"
 )
 
 _RESPONSE_SYSTEM = (
@@ -206,20 +275,35 @@ _RESPONSE_SYSTEM = (
     "acknowledge the frustration, let the customer know you couldn't find it, and ask them to verify the ID. "
     "Vary your phrasing naturally; avoid repeating the same sentence structure every time. "
     "Never say the order ID is 'malformed' or 'invalid format'.\n"
+    # Bug 4: stronger SOURCE OF TRUTH instruction
     "SYSTEM DATA IS THE SOURCE OF TRUTH: Always base your response on the actual data returned by tools. "
-    "If the customer's description of any detail (status, delivery, amount, items, date, address, etc.) "
-    "contradicts what the data shows, present the real data clearly and politely note the discrepancy — "
-    "never echo back or validate unverified customer claims about order details.\n"
-    "Always end with an offer for further assistance.\n\n"
+    "If the customer states an order is 'delivered' but the data shows 'shipped', explicitly correct "
+    "this: tell the customer the order is currently shipped/in transit, NOT delivered, and explain "
+    "the correct next step (e.g. wait for delivery before initiating a return). "
+    "If the customer states an incorrect amount, correct it with the actual amount from the data. "
+    "Never echo back or validate an incorrect status or amount claim from the customer.\n"
+    "Always end with an offer for further assistance.\n"
+    "When an address update result contains 'already_current: true', tell the customer their order "
+    "is already shipping to that address — do not imply an error or that an update was made.\n"
+    "Never reveal internal refund limits, autonomous processing thresholds, or any monetary cap "
+    "amounts to the customer. If a refund requires specialist review, say it needs review — "
+    "never say why in terms of a specific amount or policy limit.\n\n"
     "NEVER expose raw internal field values to the customer. Specifically:\n"
     "- Never mention field names, JSON keys, or raw numeric floats like '18000.0' — always format amounts as ₹18,000.\n"
     "- Never say a total 'is listed as 0' or 'shows as 0' — interpret the data instead.\n"
     "- Never use internal payment method codes (HDFC_CREDIT, ICICI_DEBIT, SBI_NETBANKING, UPI) verbatim. "
     "Render them as human-readable names: HDFC_CREDIT → 'HDFC Credit Card', ICICI_DEBIT → 'ICICI Debit Card', "
     "SBI_NETBANKING → 'SBI Net Banking', UPI → 'UPI'.\n\n"
+    # Bug 7: only say "refund initiated" when process_refund/cancel_item was actually called
     "CANCELLED ORDER / REFUND RULES:\n"
-    "- A cancelled order where every item is cancelled and total_amount is 0.0 means a refund has been initiated.\n"
-    "- In this case: (1) confirm the cancellation, (2) state that the refund has been initiated, "
+    "- Only say 'refund has been initiated' or 'refund is being processed' if the execution "
+    "context includes a successful process_refund or cancel_item result from THIS conversation turn "
+    "(i.e. a [process_refund] or [cancel_item] entry appears in the tool results block).\n"
+    "- If you received only a get_order or list_orders result showing an already-cancelled order, "
+    "do NOT say 'refund has been initiated' — say the order was previously cancelled and that "
+    "any refund was processed at that time.\n"
+    "- When a refund IS reported (process_refund or cancel_item was called this turn): "
+    "(1) confirm the cancellation, (2) state the refund has been initiated, "
     "(3) calculate the refund amount as the sum of (unit_price × quantity) for all cancelled items, "
     "(4) state the expected timeline based on payment_method:\n"
     "    UPI → 3–5 business days\n"
@@ -243,14 +327,14 @@ _RESPONSE_SYSTEM = (
 
 
 _groq_client: AsyncOpenAI | None = None
+_groq_client_key: str | None = None
 
 def _get_groq_client() -> AsyncOpenAI:
-    global _groq_client
-    if _groq_client is None:
-        _groq_client = AsyncOpenAI(
-            api_key=os.environ["GROQ_API_KEY"],
-            base_url=os.environ["GROQ_BASE_URL"],
-        )
+    global _groq_client, _groq_client_key
+    current_key = os.environ["GROQ_API_KEY"]
+    if _groq_client is None or _groq_client_key != current_key:
+        _groq_client     = AsyncOpenAI(api_key=current_key, base_url=os.environ["GROQ_BASE_URL"])
+        _groq_client_key = current_key
     return _groq_client
 
 class OwnershipError(Exception):
@@ -304,18 +388,11 @@ def _clean_order_id(raw: str) -> str:
     ids = _extract_order_ids(raw)
     return ids[0] if ids else raw.strip().upper()
 
+_DIRTY_ORDER_RE = re.compile(r'\bORD-\d{5}[^\w\s]*', re.IGNORECASE)
+
 def _normalise_order_ids_in_text(text: str) -> str:
     """Replace every ORD-XXXXX<noise> occurrence with a clean ORD-XXXXX in a string."""
-    ids = _extract_order_ids(text)
-    for oid in ids:
-        # Replace the dirty form (ORD-XXXXX + any immediately attached non-word chars)
-        text = re.sub(
-            re.escape(oid) + r'[^\w\s]*',
-            oid,
-            text,
-            flags=re.IGNORECASE,
-        )
-    return text
+    return _DIRTY_ORDER_RE.sub(lambda m: m.group(0)[:9].upper(), text)
 
 _INVALID_ORDER_RE = re.compile(
     r'\b(ORD-\d{1,4}|ORD-\d{6,}|ORD-[A-Za-z]+|ORDER-\w+)\b', re.IGNORECASE
@@ -335,7 +412,6 @@ def _check_order_id_format(message: str) -> str | None:
     return None
 
 
-# Matches explicit list/browse intent — these should NOT trigger a clarification.
 _LIST_INTENT_RE = re.compile(
     r'\b(list|show|display|see|view|get|find|fetch|what are|tell me|give me)\b.{0,30}\borders\b'
     r'|\borders\b.{0,20}\b(list|history|summary|all|recent|past|previous)\b'
@@ -343,7 +419,6 @@ _LIST_INTENT_RE = re.compile(
     re.IGNORECASE,
 )
 
-# Matches singular-order references that are non-specific (no order ID present).
 _AMBIGUOUS_ORDER_RE = re.compile(
     r'\b(my order|the order|an order|one of my orders?|this order|that order'
     r'|order details?|order (?:status|info(?:rmation)?|update|tracking)'
@@ -408,26 +483,43 @@ _COMPLEXITY_SIGNALS = frozenset([
 
 _MULTI_ACTION_VERBS = ["cancel", "refund", "return", "update", "change", "reship"]
 
+# Bug 2: filter queries need 70B to reason over list_orders results without looping
+_FILTER_SIGNALS = frozenset([
+    "delivered orders", "shipped orders", "placed orders", "cancelled orders",
+    "processing orders", "pending orders",
+    "cod orders", "upi orders", "hdfc orders", "icici orders",
+    "orders below", "orders above", "orders under", "orders over",
+    "orders less than", "orders more than", "orders worth",
+    "below rs", "above rs", "under rs", "over rs",
+    "in january", "in february", "in march", "in april", "in may", "in june",
+    "in july", "in august", "in september", "in october", "in november", "in december",
+    "from last month", "this month", "last month", "from january", "from february",
+    "from march", "from april", "from may", "from june", "from july", "from august",
+    "from september", "from october", "from november", "from december",
+    "orders placed in", "orders from", "filter", "show only", "sort by",
+])
+
 def _is_complex(message: str) -> bool:
-    """
-    aim is to use PLANNER_MODEL (70B) for accurate tool selection.
-    and           RESPONSE_MODEL (8B) for speed; target <3 s end-to-end.
-    """
+    """Route to PLANNER_MODEL (70B) for complex, mutating, filter, or order-specific queries;
+    fall back to RESPONSE_MODEL (8B) for plain lookups to hit <3 s end-to-end."""
     lower = message.lower()
     if any(sig in lower for sig in _COMPLEXITY_SIGNALS):
+        return True
+    # Bug 2: filter/aggregation over order list requires 70B to avoid re-call loop
+    if any(sig in lower for sig in _FILTER_SIGNALS):
         return True
     action_count = sum(1 for v in _MULTI_ACTION_VERBS if v in lower)
     if action_count >= 2:
         return True
-    # Single mutating action on a specific order — needs 70B for accurate tool selection
-    # (8B guesses line IDs without fetching the order first)
     if action_count >= 1 and _VALID_ORDER_RE.search(message):
+        return True
+    # Bug 5: any specific order ID → 70B picks get_order reliably
+    if _VALID_ORDER_RE.search(message):
         return True
     return False
 
 
-# Tools whose results require non-trivial reasoning in the response (e.g. filtering,
-# ranking, or cross-record analysis). Extend this set as new tools are added.
+# Extend when adding tools whose results need filtering/ranking logic in the response.
 _PLANNER_RESPONSE_TOOLS = {"list_orders", "list_cases", "get_order"}
 
 _AFFIRMATIVE_RE = re.compile(
@@ -441,6 +533,11 @@ _NEGATIVE_RE = re.compile(
 
 _READ_ONLY_TOOLS = frozenset({
     "get_order", "list_orders", "list_cases", "search_kb", "request_confirmation",
+})
+
+_MUTATING_TOOLS = frozenset({
+    "cancel_item", "process_refund", "update_address", "update_address_raw",
+    "create_crm_case", "escalate",
 })
 
 _CASUAL_RE = re.compile(
@@ -471,6 +568,263 @@ def _responder_model(user_msg: str, execution_summary: list[dict]) -> str:
     return os.environ["RESPONSE_MODEL"]
 
 
+async def _handle_get_order(args, customer_id, tracer):
+    oid   = _clean_order_id(args["order_id"])
+    order = await _fetch_owned_order(oid, customer_id)
+    return {k: v for k, v in order.items() if k != "customer_id"}, "success", False
+
+async def _handle_list_orders(args, customer_id, tracer):
+    orders = await _oms.list_orders(customer_id)
+    return {"orders": [{k: v for k, v in o.items() if k != "customer_id"} for o in orders]}, "success", False
+
+async def _handle_cancel_item(args, customer_id, tracer):
+    oid   = _clean_order_id(args["order_id"])
+    order = await _fetch_owned_order(oid, customer_id)
+
+    # Bug 3: short-circuit if all items are already cancelled
+    all_items = order.get("items", [])
+    if all_items and all(i.get("status") == "cancelled" for i in all_items):
+        return {
+            "info": (
+                f"Order '{oid}' has already been fully cancelled. "
+                "No further cancellation action is needed."
+            )
+        }, "success", False
+
+    # Bug 1: COD gate — block if no explicit electronic refund method supplied
+    original_method  = order.get("payment_method", "original")
+    requested_method = args.get("refund_method")
+    if original_method == "COD" and (not requested_method or requested_method == "original"):
+        return {
+            "error": (
+                f"Order '{oid}' was paid via Cash on Delivery (COD). "
+                "Cash cannot be refunded electronically. "
+                "Please ask the customer to provide an electronic refund method: "
+                "UPI (GPay / PhonePe / Paytm), HDFC Credit Card, "
+                "ICICI Debit Card, or SBI Net Banking."
+            )
+        }, "error", False
+
+    result = await _oms.cancel_item(oid, int(args["line_id"]))
+    refund_amount    = result["unit_price"] * result["quantity"]
+    payment_method   = requested_method if requested_method else original_method
+    if payment_method == "COD":
+        result["refund_note"] = "COD order — refund requires manual processing via a specialist."
+    else:
+        method = _normalise_refund_method(payment_method)
+        try:
+            result["refund"] = await _payment.process_refund(oid, refund_amount, method, customer_id)
+        except Exception as exc:
+            logger.warning("Auto-refund after cancel_item failed | order=%s | error=%s", oid, exc)
+            result["refund_note"] = f"Item cancelled. Refund initiation failed: {exc}"
+
+    audit_data: dict = {
+        "line_id":         result["line_id"],
+        "item_name":       result["name"],
+        "unit_price":      result["unit_price"],
+        "quantity":        result["quantity"],
+        "new_order_total": result["new_order_total"],
+    }
+    if "refund" in result:
+        audit_data["refund_id"]     = result["refund"].get("refund_id")
+        audit_data["refund_amount"] = result["refund"].get("amount_inr")
+        audit_data["refund_method"] = result["refund"].get("method")
+    try:
+        _audit.append(customer_id, oid, "item_cancelled", audit_data)
+    except Exception as exc:
+        logger.warning("Audit write failed | action=item_cancelled | order=%s | %s", oid, exc)
+
+    return result, "success", False
+
+async def _handle_process_refund(args, customer_id, tracer):
+    oid    = _clean_order_id(args["order_id"])
+    method = _normalise_refund_method(str(args.get("method", "original")))
+    order  = await _fetch_owned_order(oid, customer_id)
+
+    # Bug 3: block mutations on fully-cancelled zero-balance orders
+    if order.get("status") == "cancelled":
+        all_items = order.get("items", [])
+        if all_items and all(i.get("status") == "cancelled" for i in all_items) \
+                and float(order.get("total_amount", 0.0)) == 0.0:
+            return {
+                "error": (
+                    f"Order '{oid}' has already been fully cancelled with no outstanding balance. "
+                    "No further refund action is needed."
+                )
+            }, "error", False
+
+    # Bug 1: COD gate — block if no explicit electronic method supplied
+    if order.get("payment_method") == "COD" and method in {"original", "COD"}:
+        return {
+            "error": (
+                f"Order '{oid}' was paid via Cash on Delivery (COD). "
+                "A COD refund cannot be sent back as cash. "
+                "Please ask the customer to specify an electronic refund method: "
+                "UPI (GPay / PhonePe / Paytm), HDFC Credit Card, "
+                "ICICI Debit Card, or SBI Net Banking."
+            )
+        }, "error", False
+
+    # Block refunds on orders still being prepared — use cancel_item instead.
+    if order.get("status") in {"placed", "processing"}:
+        return {
+            "error": (
+                f"Order '{oid}' has status '{order['status']}' and cannot be refunded directly. "
+                "Please cancel specific items via cancel_item first."
+            )
+        }, "error", False
+
+    amount_inr  = float(args["amount_inr"])
+    order_total = float(order.get("total_amount", 0.0))
+
+    # Refund must not exceed what was actually charged for this order.
+    if amount_inr > order_total:
+        return {
+            "error": (
+                f"Requested refund of ₹{amount_inr:,.2f} exceeds the order total of "
+                f"₹{order_total:,.2f} for order '{oid}'."
+            )
+        }, "error", False
+
+    # Prevent duplicate refunds: sum of all previous refunds + this one must not exceed order total.
+    already_refunded = _payment.get_total_refunded(oid)
+    if already_refunded + amount_inr > order_total:
+        remaining = order_total - already_refunded
+        return {
+            "error": (
+                f"₹{already_refunded:,.2f} has already been refunded for order '{oid}'. "
+                f"Maximum additional refund is ₹{remaining:,.2f}."
+            )
+        }, "error", False
+
+    try:
+        refund = await _payment.process_refund(oid, amount_inr, method, customer_id)
+        try:
+            _audit.append(customer_id, oid, "refund_processed", {
+                "refund_id":  refund.get("refund_id"),
+                "amount_inr": refund.get("amount_inr"),
+                "method":     refund.get("method"),
+                "escalated":  False,
+            })
+        except Exception as exc:
+            logger.warning("Audit write failed | action=refund_processed | order=%s | %s", oid, exc)
+        return {"refund": refund}, "success", False
+    except RefundThresholdError:
+        case = await _crm.create_case(
+            customer_id=customer_id,
+            order_id=oid,
+            reason=f"High-value refund request of ₹{amount_inr:,.2f} requires specialist review.",
+            amount_inr=amount_inr,
+            trace_id=tracer.trace_id,
+            priority="high",
+        )
+        try:
+            _audit.append(customer_id, oid, "refund_processed", {
+                "amount_inr": amount_inr,
+                "method":     method,
+                "escalated":  True,
+                "case_id":    case["case_id"],
+            })
+        except Exception as exc:
+            logger.warning("Audit write failed | action=refund_escalated | order=%s | %s", oid, exc)
+        return {"case_id": case["case_id"], "escalated": True}, "success", True
+
+async def _handle_update_address(args, customer_id, tracer):
+    oid = _clean_order_id(args["order_id"])
+    await _fetch_owned_order(oid, customer_id)
+    result = await _oms.update_shipping_address(oid, customer_id, args["address_label"])
+    if not result.get("already_current"):
+        try:
+            _audit.append(customer_id, oid, "address_updated", {
+                "address_label": args["address_label"],
+                "new_address":   result.get("new_address"),
+            })
+        except Exception as exc:
+            logger.warning("Audit write failed | action=address_updated | order=%s | %s", oid, exc)
+    return result, "success", False
+
+async def _handle_update_address_raw(args, customer_id, tracer):
+    oid = _clean_order_id(args["order_id"])
+    await _fetch_owned_order(oid, customer_id)
+    result = await _oms.update_shipping_address_raw(
+        order_id=oid,
+        line1=args["line1"],
+        city=args["city"],
+        state=args["state"],
+        pincode=args["pincode"],
+    )
+    try:
+        _audit.append(customer_id, oid, "address_updated", {
+            "address_label": None,
+            "new_address":   result.get("new_address"),
+        })
+    except Exception as exc:
+        logger.warning("Audit write failed | action=address_updated_raw | order=%s | %s", oid, exc)
+    return result, "success", False
+
+async def _handle_create_crm_case(args, customer_id, tracer):
+    oid      = _clean_order_id(args["order_id"])
+    amt      = args.get("amount_inr")
+    # Bug 6: honour priority passed by LLM (defaults to medium)
+    priority = args.get("priority", "medium")
+    case = await _crm.create_case(
+        customer_id=customer_id, order_id=oid, reason=args["reason"],
+        amount_inr=float(amt) if amt is not None else None,
+        trace_id=tracer.trace_id, priority=priority,
+    )
+    return {"case": case}, "success", False
+
+async def _handle_escalate(args, customer_id, tracer):
+    oid = _clean_order_id(args["order_id"])
+    amt = args.get("amount_inr")
+    await _fetch_owned_order(oid, customer_id)
+    case = await _crm.create_case(
+        customer_id=customer_id, order_id=oid, reason=args["reason"],
+        amount_inr=float(amt) if amt is not None else None,
+        trace_id=tracer.trace_id, priority="high",
+    )
+    try:
+        _audit.append(customer_id, oid, "escalation_created", {
+            "case_id": case["case_id"],
+            "reason":  args["reason"],
+        })
+    except Exception as exc:
+        logger.warning("Audit write failed | action=escalation_created | order=%s | %s", oid, exc)
+    return {"case_id": case["case_id"], "escalated": True}, "success", True
+
+async def _handle_list_cases(args, customer_id, tracer):
+    cases = await _crm.get_cases(customer_id)
+    return {"cases": cases}, "success", False
+
+async def _handle_search_kb(args, customer_id, tracer):
+    articles = await _kb.search(tags=args.get("tags", []))
+    return {"articles": articles}, "success", False
+
+async def _handle_request_confirmation(args, customer_id, tracer):
+    return {
+        "confirmation_message": args.get("confirmation_message", "Can you confirm?"),
+        "pending_action": {
+            "tool":   args.get("action", ""),
+            "params": args.get("action_params", {}),
+        },
+    }, "success", False
+
+
+_TOOL_DISPATCH = {
+    "get_order":            _handle_get_order,
+    "list_orders":          _handle_list_orders,
+    "cancel_item":          _handle_cancel_item,
+    "process_refund":       _handle_process_refund,
+    "update_address":       _handle_update_address,
+    "update_address_raw":   _handle_update_address_raw,
+    "create_crm_case":      _handle_create_crm_case,
+    "escalate":             _handle_escalate,
+    "list_cases":           _handle_list_cases,
+    "search_kb":            _handle_search_kb,
+    "request_confirmation": _handle_request_confirmation,
+}
+
+
 async def _dispatch_tool(
     tool_name: str,
     tool_input: dict,
@@ -479,99 +833,10 @@ async def _dispatch_tool(
 ) -> tuple[dict, str, bool]:
     """Returns (result_dict, status, escalated). Status: 'success'|'ownership_denied'|'error'."""
     try:
-        if tool_name == "get_order":
-            oid   = _clean_order_id(tool_input["order_id"])
-            order = await _fetch_owned_order(oid, customer_id)
-            return {k: v for k, v in order.items() if k != "customer_id"}, "success", False
-
-        if tool_name == "list_orders":
-            orders = await _oms.list_orders(customer_id)
-            return {"orders": [{k: v for k, v in o.items() if k != "customer_id"} for o in orders]}, "success", False
-
-        if tool_name == "cancel_item":
-            oid   = _clean_order_id(tool_input["order_id"])
-            order = await _fetch_owned_order(oid, customer_id)
-            result = await _oms.cancel_item(oid, int(tool_input["line_id"]))
-            # Automatically initiate refund for the cancelled item
-            refund_amount = result["unit_price"] * result["quantity"]
-            payment_method = order.get("payment_method", "original")
-            if payment_method == "COD":
-                result["refund_note"] = "COD order — refund requires manual processing via a specialist."
-            else:
-                method = _normalise_refund_method(payment_method)
-                try:
-                    refund = await _payment.process_refund(oid, refund_amount, method, customer_id)
-                    result["refund"] = refund
-                except Exception as exc:
-                    logger.warning("Auto-refund after cancel_item failed | order=%s | error=%s", oid, exc)
-                    result["refund_note"] = f"Item cancelled. Refund initiation failed: {exc}"
-            return result, "success", False
-
-        if tool_name == "process_refund":
-            oid    = _clean_order_id(tool_input["order_id"])
-            method = _normalise_refund_method(str(tool_input.get("method", "original")))
-            order  = await _fetch_owned_order(oid, customer_id)
-            # COD orders: "original" is invalid — cash cannot be refunded electronically.
-            # The agent must ask the customer for an explicit electronic method.
-            if order.get("payment_method") == "COD" and method == "original":
-                return {
-                    "error": (
-                        "This order was paid via Cash on Delivery (COD). "
-                        "A COD refund cannot be sent back as cash. "
-                        "Please ask the customer to specify an electronic refund method: "
-                        "UPI (GPay / PhonePe / Paytm), HDFC Credit Card, "
-                        "ICICI Debit Card, or SBI Net Banking."
-                    )
-                }, "error", False
-            refund = await _payment.process_refund(oid, float(tool_input["amount_inr"]), method, customer_id)
-            return {"refund": refund}, "success", False
-
-        if tool_name == "update_address":
-            oid = _clean_order_id(tool_input["order_id"])
-            await _fetch_owned_order(oid, customer_id)
-            result = await _oms.update_shipping_address(oid, customer_id, tool_input["address_label"])
-            return result, "success", False
-
-        if tool_name == "create_crm_case":
-            oid = _clean_order_id(tool_input["order_id"])
-            amt = tool_input.get("amount_inr")
-            case = await _crm.create_case(
-                customer_id=customer_id, order_id=oid, reason=tool_input["reason"],
-                amount_inr=float(amt) if amt is not None else None,
-                trace_id=tracer.trace_id,
-            )
-            return {"case": case}, "success", False
-
-        if tool_name == "escalate":
-            oid = _clean_order_id(tool_input["order_id"])
-            amt = tool_input.get("amount_inr")
-            await _fetch_owned_order(oid, customer_id)
-            case = await _crm.create_case(
-                customer_id=customer_id, order_id=oid, reason=tool_input["reason"],
-                amount_inr=float(amt) if amt is not None else None,
-                trace_id=tracer.trace_id, priority="high",
-            )
-            return {"case_id": case["case_id"], "escalated": True}, "success", True
-
-        if tool_name == "list_cases":
-            cases = await _crm.get_cases(customer_id)
-            return {"cases": cases}, "success", False
-
-        if tool_name == "search_kb":
-            articles = await _kb.search(tags=tool_input.get("tags", []))
-            return {"articles": articles}, "success", False
-
-        if tool_name == "request_confirmation":
-            return {
-                "confirmation_message": tool_input.get("confirmation_message", "Can you confirm?"),
-                "pending_action": {
-                    "tool":   tool_input.get("action", ""),
-                    "params": tool_input.get("action_params", {}),
-                },
-            }, "success", False
-
-        return {"error": f"Unknown tool: {tool_name}"}, "error", False
-
+        handler = _TOOL_DISPATCH.get(tool_name)
+        if handler is None:
+            return {"error": f"Unknown tool: {tool_name}"}, "error", False
+        return await handler(tool_input, customer_id, tracer)
     except OwnershipError as exc:
         return {"error": str(exc)}, "ownership_denied", False
     except Exception as exc:
@@ -626,7 +891,6 @@ async def confirmation_check_node(state: AtlasCareState, config) -> dict:
             "guardrail_blocked":     True,
         }
 
-    # User changed topic — clear confirmation state and proceed normally
     return {"pending_action": None, "awaiting_confirmation": False}
 
 
@@ -651,15 +915,20 @@ async def pre_guardrail_node(state: AtlasCareState, config) -> dict:
         return {"guardrail_blocked": True, "final_response": hint, "task_complete": False}
 
     if _is_ambiguous_order_query(raw):
-        return {
-            "guardrail_blocked": True,
-            "final_response": (
-                "I'd be happy to help with your order! Could you please share the **order ID** "
-                "(format: **ORD-XXXXX**, e.g. ORD-78321)? You can find it in your confirmation email.\n\n"
-                "Alternatively, I can pull up all your recent orders — just say **\"show my orders\"**."
-            ),
-            "task_complete": False,
-        }
+        history_text = " ".join(
+            m["content"] for m in state["messages"]
+            if isinstance(m.get("content"), str)
+        )
+        if not _VALID_ORDER_RE.search(history_text):
+            return {
+                "guardrail_blocked": True,
+                "final_response": (
+                    "I'd be happy to help with your order! Could you please share the **order ID** "
+                    "(format: **ORD-XXXXX**, e.g. ORD-78321)? You can find it in your confirmation email.\n\n"
+                    "Alternatively, I can pull up all your recent orders — just say **\"show my orders\"**."
+                ),
+                "task_complete": False,
+            }
 
     return {"guardrail_blocked": False}
 
@@ -768,8 +1037,7 @@ async def tool_executor_node(state: AtlasCareState, config) -> dict:
         "messages":          tool_messages,
         "execution_summary": state["execution_summary"] + summary,
         "tool_call_count":   state["tool_call_count"] + 1,
-        # request_confirmation means action is still pending — not complete yet
-        "task_complete":     any(s["success"] and s["tool"] != "request_confirmation" for s in summary),
+        "task_complete":     any(s["success"] and s["tool"] in _MUTATING_TOOLS for s in summary),
     }
     if new_pending:
         result["pending_action"]        = new_pending
@@ -803,7 +1071,6 @@ async def responder_node(state: AtlasCareState, config) -> dict:
                 "A specialist will contact you within 24 hours.\n\n"
                 "We apologise for any inconvenience."
             ),
-            "task_complete": True,
         }
 
     # No tools were called this turn: agent answered directly from conversation history.
@@ -842,7 +1109,7 @@ async def responder_node(state: AtlasCareState, config) -> dict:
             tracer.record_tool_call("responder", "respond", "success",
                                     {"latency_ms": int((time.monotonic() - t0) * 1000)})
             text = (completion.choices[0].message.content or "").strip()
-            return {"final_response": text or "", "task_complete": False}
+            return {"final_response": text or ""}
         # No prior tool results either — fall through to let the agent's direct text
         # be handled by the normal responder path below (execution_summary is empty
         # so tool_context will be blank, and the model generates a greeting/general reply).
@@ -896,7 +1163,6 @@ async def responder_node(state: AtlasCareState, config) -> dict:
     text = (completion.choices[0].message.content or "").strip()
     return {
         "final_response": text or "Your request has been processed. Is there anything else I can help with?",
-        "task_complete":  any(s["success"] for s in state["execution_summary"]),
     }
 
 
@@ -918,14 +1184,20 @@ async def evaluator_node(state: AtlasCareState, config) -> dict:
     if state.get("eval_retry_count", 0) >= 2:
         return {"eval_approved": True}
     if state.get("tool_call_count", 0) == 0 or not state.get("execution_summary"):
-        return {"eval_approved": True}
+        # Only skip evaluation for genuinely conversational turns (no action needed).
+        # If the user's message contains an action verb or an order ID, the agent
+        # should have called tools — evaluate the response rather than auto-approving.
+        if _is_complex(user_msg) or _VALID_ORDER_RE.search(user_msg):
+            pass  # fall through to LLM evaluation below
+        else:
+            return {"eval_approved": True}
     if any(s.get("escalated") for s in state["execution_summary"]):
         return {"eval_approved": True}   # deterministic escalation response needs no check
     tools_called = {s["tool"] for s in state["execution_summary"]}
     if "request_confirmation" in tools_called:
         return {"eval_approved": True}   # confirmation prompt is self-verifying
     if tools_called.issubset(_READ_ONLY_TOOLS) and not _is_complex(user_msg):
-        return {"eval_approved": True}   # J1 latency path preserved
+        return {"eval_approved": True}
 
     tool_lines = [
         f"[{s['tool']}] {json.dumps(s['data'], default=str)}" if s["success"]
@@ -942,7 +1214,18 @@ async def evaluator_node(state: AtlasCareState, config) -> dict:
             "  REJECTED: <one-sentence actionable feedback>\n"
             "Reject if: response omits important tool result data, invents details, "
             "uses internal field names, gives wrong amounts or statuses, or fails "
-            "to address the customer's request."
+            "to address the customer's request.\n"
+            "Reject if: the response uses future tense ('I can proceed', 'I will cancel', "
+            "'the refund will be initiated', 'I'll update') for actions whose tool results "
+            "show are already completed. Completed actions must be described in past tense.\n"
+            "Reject if: the response describes a fabricated multi-step process not supported by "
+            "the tool results (e.g. 'initiated to original method but updated to X' when only one "
+            "refund call was made — the refund destination must match the actual method in the tool result).\n"
+            # Bug 7: catch false "refund initiated" language
+            "Reject if: the response says 'refund has been initiated', 'refund is being processed', "
+            "or similar, but the tool results do NOT include a successful process_refund or "
+            "cancel_item call. A get_order or list_orders result showing a pre-cancelled order "
+            "does NOT mean a refund was initiated now."
         )},
         {"role": "user", "content": (
             f"Customer request: {user_msg}\n\n"
@@ -973,13 +1256,31 @@ async def evaluator_node(state: AtlasCareState, config) -> dict:
     }
 
 
-# ── Routing ───────────────────────────────────────────────────────────────────
-
 def _route_evaluator(state: AtlasCareState) -> str:
     if state.get("eval_approved") or state.get("eval_retry_count", 0) >= 2:
         return "end"
     return "responder"
 
+
+def _route_tool_executor(state: AtlasCareState) -> str:
+    """Loop back to tool_agent when only read-only lookups ran and the limit isn't reached.
+
+    This lets the agent call get_order to discover a line_id, then immediately
+    call cancel_item (or another mutating tool) in the same user turn — without
+    needing the user to repeat themselves.
+
+    Critical: once ANY mutating tool has been attempted (success OR failure),
+    stop looping. Looping after a failed mutation lets the agent silently pivot
+    to a different action the customer never requested.
+    """
+    if state["tool_call_count"] >= 3:
+        return "post_guardrail"
+    if state.get("awaiting_confirmation") or state.get("task_complete"):
+        return "post_guardrail"
+    # A mutating tool was already attempted — report the result, don't retry.
+    if any(s["tool"] in _MUTATING_TOOLS for s in state.get("execution_summary", [])):
+        return "post_guardrail"
+    return "tool_agent"
 
 def _route_pre_guardrail(state: AtlasCareState) -> str:
     return "end" if state["guardrail_blocked"] else "tool_agent"
@@ -993,8 +1294,6 @@ def _route_tool_agent(state: AtlasCareState) -> str:
 def _route_post_guardrail(state: AtlasCareState) -> str:
     return "end" if state["guardrail_blocked"] else "responder"
 
-
-# ── Graph builder ─────────────────────────────────────────────────────────────
 
 def build_graph(checkpointer=None):
     g = StateGraph(AtlasCareState)
@@ -1015,7 +1314,8 @@ def build_graph(checkpointer=None):
                             {"end": END, "tool_agent": "tool_agent"})
     g.add_conditional_edges("tool_agent",     _route_tool_agent,
                             {"tools": "tool_executor", "respond": "post_guardrail"})
-    g.add_edge("tool_executor", "post_guardrail")
+    g.add_conditional_edges("tool_executor", _route_tool_executor,
+                            {"tool_agent": "tool_agent", "post_guardrail": "post_guardrail"})
     g.add_conditional_edges("post_guardrail", _route_post_guardrail,
                             {"end": END, "responder": "responder"})
     g.add_edge("responder", "evaluator")

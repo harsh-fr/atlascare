@@ -1,3 +1,74 @@
 {
-  "refunds": []
+  "refunds": [
+    {
+      "refund_id": "REF-10001-BB10EB2E",
+      "order_id": "ORD-10001",
+      "customer_id": "CUST-001",
+      "amount_inr": 750.0,
+      "method": "HDFC_CREDIT",
+      "status": "initiated",
+      "sla_days": 5,
+      "created_at": "2026-05-28T16:24:24.767238+00:00"
+    },
+    {
+      "refund_id": "REF-10001-C4FE5AD5",
+      "order_id": "ORD-10001",
+      "customer_id": "CUST-001",
+      "amount_inr": 1500.0,
+      "method": "HDFC_CREDIT",
+      "status": "initiated",
+      "sla_days": 5,
+      "created_at": "2026-05-28T16:24:24.771228+00:00"
+    },
+    {
+      "refund_id": "REF-10001-3961FB36",
+      "order_id": "ORD-10001",
+      "customer_id": "CUST-001",
+      "amount_inr": 1000.0,
+      "method": "HDFC_CREDIT",
+      "status": "initiated",
+      "sla_days": 5,
+      "created_at": "2026-05-28T16:24:24.775222+00:00"
+    },
+    {
+      "refund_id": "REF-10006-81CEDC23",
+      "order_id": "ORD-10006",
+      "customer_id": "CUST-001",
+      "amount_inr": 25000.0,
+      "method": "original",
+      "status": "initiated",
+      "sla_days": 5,
+      "created_at": "2026-05-28T17:45:41.754315+00:00"
+    },
+    {
+      "refund_id": "REF-10002-97E38814",
+      "order_id": "ORD-10002",
+      "customer_id": "CUST-001",
+      "amount_inr": 500.0,
+      "method": "HDFC_CREDIT",
+      "status": "initiated",
+      "sla_days": 5,
+      "created_at": "2026-05-29T03:46:27.770512+00:00"
+    },
+    {
+      "refund_id": "REF-10002-9BEDDCEF",
+      "order_id": "ORD-10002",
+      "customer_id": "CUST-001",
+      "amount_inr": 200.0,
+      "method": "HDFC_CREDIT",
+      "status": "initiated",
+      "sla_days": 5,
+      "created_at": "2026-05-29T04:28:21.115579+00:00"
+    },
+    {
+      "refund_id": "REF-10011-6595711B",
+      "order_id": "ORD-10011",
+      "customer_id": "CUST-001",
+      "amount_inr": 8999.0,
+      "method": "UPI",
+      "status": "initiated",
+      "sla_days": 5,
+      "created_at": "2026-05-29T04:32:55.039056+00:00"
+    }
+  ]
 }

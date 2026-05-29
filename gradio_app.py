@@ -1,9 +1,3 @@
-"""
-gradio_app.py
-=============
-AtlasCare Customer-Facing Gradio UI.
-"""
-
 import os
 import secrets
 import threading
@@ -13,20 +7,19 @@ from dotenv import load_dotenv
 
 load_dotenv()
 
-PORT         = os.getenv("PORT", "8000")
-API_HOST     = "127.0.0.1"
-API_URL      = f"http://{API_HOST}:{PORT}/query"
-AUTH_URL     = f"http://{API_HOST}:{PORT}/auth"
-DELETE_URL   = f"http://{API_HOST}:{PORT}/session"
-GRADIO_HOST  = os.getenv("GRADIO_HOST", "0.0.0.0")
-GRADIO_PORT  = int(os.getenv("GRADIO_PORT", "7860"))
+PORT        = os.getenv("PORT", "8000")
+API_HOST    = "127.0.0.1"
+API_URL     = f"http://{API_HOST}:{PORT}/query"
+AUTH_URL    = f"http://{API_HOST}:{PORT}/auth"
+DELETE_URL  = f"http://{API_HOST}:{PORT}/session"
+GRADIO_HOST = os.getenv("GRADIO_HOST", "0.0.0.0")
+GRADIO_PORT = int(os.getenv("GRADIO_PORT", "7860"))
 
-# ---------------------------------------------------------------------------
-# Per-session Gradio-side state (keyed by session_id)
-# ---------------------------------------------------------------------------
 _sessions: dict[str, dict] = {}
 _lock = threading.Lock()
 
+
+# ── Session helpers ──────────────────────────────────────────────────────────
 
 def _get_session(session_id: str) -> dict:
     with _lock:
@@ -36,7 +29,6 @@ def _get_session(session_id: str) -> dict:
 
 
 def _clear_backend_session(session_id: str) -> None:
-    """Notify backend to free server-side conversation history (best-effort)."""
     if not session_id:
         return
     try:
@@ -45,51 +37,34 @@ def _clear_backend_session(session_id: str) -> None:
         pass
 
 
-# ---------------------------------------------------------------------------
-# Auth helpers
-# ---------------------------------------------------------------------------
-def _do_login(username: str, password: str):
+def _api_post(url: str, data: dict) -> dict:
     try:
-        resp = requests.post(f"{AUTH_URL}/login",
-                             json={"username": username, "password": password},
-                             timeout=10)
-        return resp.json()
+        return requests.post(url, json=data, timeout=10).json()
     except Exception as exc:
-        return {"success": False, "error": f"Connection error: {str(exc)[:60]}"}
+        msg = f"Connection error: {str(exc)[:60]}"
+        return {"success": False, "error": msg, "message": msg}
+
+
+def _do_login(username: str, password: str):
+    return _api_post(f"{AUTH_URL}/login", {"username": username, "password": password})
 
 
 def _do_request_otp(username: str):
-    try:
-        resp = requests.post(f"{AUTH_URL}/request-otp",
-                             json={"username": username}, timeout=10)
-        return resp.json()
-    except Exception as exc:
-        return {"success": False, "message": f"Connection error: {str(exc)[:60]}"}
+    return _api_post(f"{AUTH_URL}/request-otp", {"username": username})
 
 
 def _do_reset_password(username: str, otp: str, new_password: str):
-    try:
-        resp = requests.post(f"{AUTH_URL}/reset-password",
-                             json={"username": username, "otp": otp,
-                                   "new_password": new_password},
-                             timeout=10)
-        return resp.json()
-    except Exception as exc:
-        return {"success": False, "error": f"Connection error: {str(exc)[:60]}"}
+    return _api_post(f"{AUTH_URL}/reset-password",
+                     {"username": username, "otp": otp, "new_password": new_password})
 
 
-# ---------------------------------------------------------------------------
-# Core chat function
-# ---------------------------------------------------------------------------
 def chat(message: str, history: list, session_id: str):
-    """Main chat handler. Returns (updated_history, cleared_input, status_text)."""
     if not session_id:
         return (history + [(message, "Please log in to start a conversation.")],
                 "", "❌ Not authenticated")
 
     sess = _get_session(session_id)
 
-    # ── Terminated session ─────────────────────────────────────────────
     if sess["terminated"]:
         return (
             history + [(message,
@@ -98,7 +73,6 @@ def chat(message: str, history: list, session_id: str):
             "", "🔴 Session ended",
         )
 
-    # ── Exit keyword ───────────────────────────────────────────────────
     if message.strip().lower() in ("exit", "quit", "bye", "goodbye"):
         sess["terminated"] = True
         _clear_backend_session(session_id)
@@ -109,11 +83,9 @@ def chat(message: str, history: list, session_id: str):
             "", "🔴 Session closed",
         )
 
-    # ── Empty message guard ────────────────────────────────────────────
     if not message.strip():
         return history, "", _status_text(session_id)
 
-    # ── Build payload — MemorySaver handles conversation history ───────
     payload = {"message": message, "session_id": session_id}
 
     try:
@@ -137,7 +109,6 @@ def chat(message: str, history: list, session_id: str):
 
     history = history + [(message, bot_reply)]
 
-    # Show resolved banner only when the backend confirms the task is done
     if task_complete:
         history = history + [(
             None,
@@ -156,31 +127,24 @@ def _status_text(session_id: str) -> str:
     return "🔴 Session ended" if sess["terminated"] else "🟢 Session active"
 
 
+# ── Gradio layout ────────────────────────────────────────────────────────────
 
-# ---------------------------------------------------------------------------
-# Gradio UI
-# ---------------------------------------------------------------------------
-with gr.Blocks(title="AtlasCare Customer Support", theme=gr.themes.Soft()) as demo:
+with gr.Blocks(title="AtlasCare", theme=gr.themes.Soft()) as demo:
 
-    # Persistent states
-    session_id_state   = gr.State("")
-    customer_id_state  = gr.State("")
+    session_id_state  = gr.State("")
+    customer_id_state = gr.State("")
 
-    # ── AUTH SECTION ─────────────────────────────────────────────────────
     with gr.Column(visible=True) as auth_col:
         gr.Markdown("# 🛒 AtlasCare Customer Support")
         gr.Markdown("Sign in to get help with your orders, refunds, and more.")
 
         with gr.Tabs():
-
-            # ── Login ────────────────────────────────────────────────────
             with gr.Tab("🔐 Login"):
                 login_username = gr.Textbox(label="Username", placeholder="e.g. priya")
                 login_password = gr.Textbox(label="Password", type="password")
                 login_btn      = gr.Button("Login", variant="primary")
                 login_msg      = gr.Markdown("")
 
-            # ── Forgot Password ──────────────────────────────────────────
             with gr.Tab("🔑 Forgot Password"):
                 fp_username    = gr.Textbox(label="Username")
                 fp_request_btn = gr.Button("Request OTP")
@@ -191,7 +155,6 @@ with gr.Blocks(title="AtlasCare Customer Support", theme=gr.themes.Soft()) as de
                     fp_confirm_btn = gr.Button("Reset Password", variant="primary")
                     fp_reset_msg   = gr.Markdown("")
 
-    # ── CHAT SECTION ──────────────────────────────────────────────────────
     with gr.Column(visible=False) as chat_col:
         with gr.Row():
             gr.Markdown("# 🛒 AtlasCare Customer Support")
@@ -219,8 +182,7 @@ with gr.Blocks(title="AtlasCare Customer Support", theme=gr.themes.Soft()) as de
             clear_btn       = gr.Button("🗑 Clear Chat", scale=1)
             new_session_btn = gr.Button("🔄 New Session", scale=1)
 
-
-    # ── EVENT HANDLERS ────────────────────────────────────────────────────
+    # ── Event handlers ────────────────────────────────────────────
 
     def do_login(username, password):
         data = _do_login(username.strip(), password)
@@ -229,23 +191,18 @@ with gr.Blocks(title="AtlasCare Customer Support", theme=gr.themes.Soft()) as de
             cid = data["customer_id"]
             _get_session(sid)
             return (
-                gr.update(visible=False),   # hide auth
-                gr.update(visible=True),    # show chat
-                sid,                        # session_id_state
-                cid,                        # customer_id_state
-                username.strip(),           # logged_in_as
-                "🟢 Session active",        # status_box
-                [],                         # clear chatbot
-                "",                         # clear login_msg
+                gr.update(visible=False),
+                gr.update(visible=True),
+                sid, cid,
+                username.strip(),
+                "🟢 Session active",
+                [], "",
             )
         return (
             gr.update(visible=True),
             gr.update(visible=False),
-            "", "",
-            "",
-            "❌ Not authenticated",
-            [],
-            f"❌ {data.get('error', 'Login failed')}",
+            "", "", "", "❌ Not authenticated",
+            [], f"❌ {data.get('error', 'Login failed')}",
         )
 
     login_btn.click(
@@ -263,14 +220,10 @@ with gr.Blocks(title="AtlasCare Customer Support", theme=gr.themes.Soft()) as de
 
     def do_request_otp(username):
         data = _do_request_otp(username.strip())
-        msg  = data.get("message", "OTP requested.")
-        return gr.update(value=msg), gr.update(visible=True)
+        return gr.update(value=data.get("message", "OTP requested.")), gr.update(visible=True)
 
-    fp_request_btn.click(
-        fn=do_request_otp,
-        inputs=[fp_username],
-        outputs=[fp_otp_msg, fp_reset_col],
-    )
+    fp_request_btn.click(fn=do_request_otp, inputs=[fp_username],
+                         outputs=[fp_otp_msg, fp_reset_col])
 
     def do_reset_password(username, otp, new_password):
         data = _do_reset_password(username.strip(), otp.strip(), new_password)
@@ -278,11 +231,9 @@ with gr.Blocks(title="AtlasCare Customer Support", theme=gr.themes.Soft()) as de
             return f"✅ {data.get('message', 'Password reset. Please log in.')}"
         return f"❌ {data.get('error', 'Reset failed')}"
 
-    fp_confirm_btn.click(
-        fn=do_reset_password,
-        inputs=[fp_username, fp_otp, fp_new_pass],
-        outputs=[fp_reset_msg],
-    )
+    fp_confirm_btn.click(fn=do_reset_password,
+                         inputs=[fp_username, fp_otp, fp_new_pass],
+                         outputs=[fp_reset_msg])
 
     def do_logout(session_id):
         if session_id:
@@ -290,12 +241,8 @@ with gr.Blocks(title="AtlasCare Customer Support", theme=gr.themes.Soft()) as de
             with _lock:
                 _sessions.pop(session_id, None)
         return (
-            gr.update(visible=True),   # show auth
-            gr.update(visible=False),  # hide chat
-            "", "",                    # clear states
-            "", "",                    # clear logged_in_as, login_msg
-            [], "",                    # clear chatbot, message_box
-            "🟢 Session active",       # reset status_box
+            gr.update(visible=True), gr.update(visible=False),
+            "", "", "", "", [], "", "🟢 Session active",
         )
 
     logout_btn.click(
@@ -316,10 +263,7 @@ with gr.Blocks(title="AtlasCare Customer Support", theme=gr.themes.Soft()) as de
         outputs=[chatbot, message_box, status_box],
     )
 
-    def clear_chat():
-        return [], ""
-
-    clear_btn.click(fn=clear_chat, outputs=[chatbot, message_box])
+    clear_btn.click(fn=lambda: ([], ""), outputs=[chatbot, message_box])
 
     def new_session(customer_id, old_session_id):
         if not customer_id:
@@ -339,9 +283,8 @@ with gr.Blocks(title="AtlasCare Customer Support", theme=gr.themes.Soft()) as de
     )
 
 
-
 if __name__ == "__main__":
-    print(f"AtlasCare Customer UI -> http://{GRADIO_HOST}:{GRADIO_PORT}")
+    print(f"AtlasCare  →  http://{GRADIO_HOST}:{GRADIO_PORT}")
     demo.launch(
         server_name=GRADIO_HOST,
         server_port=GRADIO_PORT,
