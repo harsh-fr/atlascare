@@ -155,11 +155,19 @@ class TestJ2CompoundRequest:
         assert len(cc) >= 1
         assert cc[0]["status"] == "success"
 
-    def test_j2_refund_step_recorded_as_success(self, client):
+    def test_j2_refund_step_recorded_as_success(self, client, data_dir):
         body = _run(client, "Cancel item 2 from ORD-78321 and refund.", _j2_responses())
-        rc   = [tc for tc in body["trace"]["tool_calls"] if tc["action"] == "process_refund"]
-        assert len(rc) >= 1
-        assert rc[0]["status"] == "success"
+        # The refund is delivered as part of cancel_item's auto-refund — cancelling
+        # an item refunds it. The separate process_refund on the still-processing
+        # order is correctly rejected to prevent a DOUBLE refund.
+        cc = [tc for tc in body["trace"]["tool_calls"] if tc["action"] == "cancel_item"]
+        assert cc and cc[0]["status"] == "success"
+        rc = [tc for tc in body["trace"]["tool_calls"] if tc["action"] == "process_refund"]
+        assert rc and rc[0]["status"] == "error", "redundant standalone refund must be blocked"
+        # The refund WAS delivered (via the cancellation) — recorded in refunds.json.
+        refunds = json.loads((data_dir / "refunds.json").read_text()).get("refunds", [])
+        assert any(r.get("order_id") == "ORD-78321" for r in refunds), \
+            "cancel_item should have auto-refunded the cancelled item"
 
     def test_j2_address_update_step_recorded(self, client):
         body = _run(client, "Ship remaining items to office for ORD-78321.", _j2_responses())

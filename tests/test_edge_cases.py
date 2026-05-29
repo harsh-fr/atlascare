@@ -9,7 +9,10 @@ import json
 import re
 import pytest
 from unittest.mock import patch, AsyncMock, MagicMock
-from tests.conftest import make_tool_mock, make_done_mock, make_text_mock, make_approved_mock, _make_order
+from tests.conftest import (
+    make_tool_mock, make_multi_tool_mock, make_done_mock, make_text_mock,
+    make_approved_mock, _make_order,
+)
 
 
 # ---------------------------------------------------------------------------
@@ -119,6 +122,39 @@ class TestInvalidOrderInputs:
         cc = [tc for tc in body["trace"]["tool_calls"] if tc["action"] == "cancel_item"]
         assert cc and cc[0]["status"] == "error"
 
+    def test_high_value_cancel_forces_confirmation_then_escalates(self, client, data_dir):
+        """A direct cancel of a >Rs.5,000 item is GATED behind confirmation in code
+        (not left to the model). On 'yes', the >Rs.25,000 auto-refund is handed to a
+        specialist via a high-priority case — never cancel-without-refund silently.
+        (ORD-78321 line 1 is a Rs.55,000 laptop on a 'processing' order.)"""
+        SESSION = "sess-cust001"
+        mock = MagicMock()
+        mock.chat.completions.create = AsyncMock(side_effect=[
+            # turn 1: model calls cancel_item directly → executor converts to a confirmation
+            make_tool_mock("cancel_item", {"order_id": "ORD-78321", "line_id": 1}),
+            make_text_mock("This is a high-value item — shall I cancel it?"),
+            # turn 2 ('yes'): cancel dispatched → escalation holding message (spare mock)
+            make_approved_mock(),
+        ])
+        with patch("agent.graph._groq_client", mock):
+            b1 = client.post("/query", json={
+                "message": "Cancel item 1 from ORD-78321.", "session_id": SESSION}).json()
+            acts1 = [t["action"] for t in b1["trace"]["tool_calls"]]
+            assert "request_confirmation" in acts1, "high-value cancel must be gated by confirmation"
+            assert "cancel_item" not in acts1, "cancel must NOT execute before confirmation"
+
+            b2 = client.post("/query", json={"message": "yes", "session_id": SESSION}).json()
+
+        cc = [t for t in b2["trace"]["tool_calls"] if t["action"] == "cancel_item"]
+        assert cc and cc[0]["status"] == "success", "confirmed cancel should execute"
+        crm = json.loads((data_dir / "crm_cases.json").read_text())
+        assert any(
+            c.get("order_id") == "ORD-78321" and c.get("priority") == "high"
+            for c in crm.get("cases", [])
+        ), "high-value cancel did not create a specialist refund case"
+        resp = b2["response"].lower()
+        assert any(w in resp for w in ["specialist", "case", "review", "24"])
+
 
 # ===========================================================================
 # Missing data
@@ -160,29 +196,20 @@ class TestMissingData:
 class TestPaymentGatewayRetry:
 
     def test_gateway_timeout_then_success(self, patched_env):
-        from tools.payment_tool import PaymentTool, PaymentGatewayError
+        # The single retry loop (inside _call_gateway_with_retry) recovers from a
+        # transient timeout: first gateway attempt fails (random < failure_rate),
+        # second attempt succeeds.
+        from tools.payment_tool import PaymentTool
 
-        tool    = PaymentTool()
-        call_n  = 0
-        success = {
-            "refund_id": "REF-78321-TEST0001", "order_id": "ORD-78321",
-            "amount_inr": 1500.0, "method": "HDFC_CREDIT",
-            "status": "initiated", "sla_days": 5, "message": "Refund initiated.",
-        }
+        tool = PaymentTool()
+        tool._config["behaviour"]["failure_rate"] = 0.5
 
-        async def retry_mock(*a, **k):
-            nonlocal call_n
-            call_n += 1
-            if call_n == 1:
-                raise PaymentGatewayError("Simulated timeout on attempt 1.")
-            return success
-
-        with patch.object(tool, "_call_gateway_with_retry", side_effect=retry_mock):
+        with patch("tools.payment_tool.random.random", side_effect=[0.0, 1.0]):
             result = asyncio.get_event_loop().run_until_complete(
                 tool.process_refund("ORD-78321", 1500.0, "HDFC_CREDIT", "CUST-001"))
 
-        assert result["status"]    == "initiated"
-        assert result["refund_id"] == "REF-78321-TEST0001"
+        assert result["status"]   == "initiated"
+        assert result["order_id"] == "ORD-78321"
 
     def test_all_retries_exhausted_raises_error(self, patched_env):
         from tools.payment_tool import PaymentTool, PaymentGatewayError
@@ -217,6 +244,226 @@ class TestPaymentGatewayRetry:
         finally:
             pt_mod.MAX_RETRIES        = original
             pt_mod.RETRY_BASE_DELAY_S = original_delay
+
+
+# ===========================================================================
+# Refund-method backstop (unsupported method must not silently become 'original')
+# ===========================================================================
+
+class TestRefundMethodBackstop:
+
+    def test_resolver_defaults_and_aliases(self, patched_env):
+        from agent.graph import _resolve_requested_refund_method as r
+        assert r(None)         == ("original", None)
+        assert r("original")   == ("original", None)
+        assert r("same card")  == ("original", None)   # alias → original
+        assert r("hdfc")       == ("HDFC_CREDIT", None)
+        assert r("UPI")        == ("UPI", None)
+
+    def test_resolver_rejects_unsupported_method(self, patched_env):
+        from agent.graph import _resolve_requested_refund_method as r
+        for bad in ("american express", "amex", "AMEX_CREDIT", "crypto", "paypal"):
+            method, error = r(bad)
+            assert method is None, f"{bad!r} should not resolve to a method"
+            assert error and "not supported" in error
+            # Non-COD default: original payment method is offered first.
+            assert "original payment method" in error
+            assert error.index("original payment method") < error.index(":"), \
+                "original method must be offered before the electronic list"
+
+    def test_resolver_cod_lists_electronic_only(self, patched_env):
+        """COD has no electronic original — the menu must NOT offer 'original',
+        only the supported electronic rails."""
+        from agent.graph import _resolve_requested_refund_method as r
+        method, error = r("american express", original_method="COD")
+        assert method is None
+        assert "original payment method" not in error
+        assert "electronic" in error
+
+    def test_detect_unsupported_method_in_message(self, patched_env):
+        from agent.graph import _detect_unsupported_refund_method as d
+        # Fires on plainly-unsupported brands phrased as a refund destination.
+        assert d("cancel the remaining item and refund me to American Express Card")
+        assert d("refund me to my amex")
+        assert d("please send the refund to PayPal")
+        assert d("refund to my Visa card please")
+        # Does NOT fire: supported rail / original named, or no destination phrase.
+        assert d("refund to my HDFC credit card") is None
+        assert d("refund to my original payment method") is None
+        assert d("cancel item 1 and refund to UPI") is None
+        assert d("I want a refund of Rs.24999 for order ORD-78323") is None
+        assert d("not amex, use my hdfc card") is None
+
+    def test_unsupported_method_message_blocked_without_confirmation(self, client):
+        """A customer asking to be refunded to an unsupported method gets the menu
+        DIRECTLY — no tool call, no confirmation prompt — driven by their own words."""
+        body = _run(client, "Cancel item 1 from ORD-78321 and refund me to American Express Card.", [
+            # No planner/responder mock should be consumed — the guard short-circuits.
+            make_text_mock("unused"),
+        ])
+        # No mutating tool ran and no confirmation was requested.
+        assert "cancel_item" not in _actions(body)
+        assert "request_confirmation" not in _actions(body)
+        resp = body["response"].lower()
+        assert "american express" in resp
+        assert "original payment method" in resp  # offered first (non-COD order)
+
+    def test_refund_failure_does_not_cancel_item(self, client, data_dir):
+        """ATOMICITY: if the refund can't be initiated, the item must NOT be
+        cancelled — no cancelled-without-refund orphan (regression for ORD-10001
+        line 3, which was cancelled with no refund record/case/audit)."""
+        import agent.graph as g
+        from tools.payment_tool import PaymentGatewayError
+
+        async def boom(*a, **k):
+            raise PaymentGatewayError("gateway unavailable")
+
+        mock_client = MagicMock()
+        mock_client.chat.completions.create = AsyncMock(side_effect=[
+            make_tool_mock("cancel_item", {"order_id": "ORD-78321", "line_id": 2}),
+            make_text_mock("Sorry, I couldn't process that right now."),
+            make_approved_mock(),
+        ])
+        with patch("agent.graph._groq_client", mock_client):
+            with patch.object(g._payment, "process_refund", side_effect=boom):
+                resp = client.post("/query", json={
+                    "message": "Cancel item 2 from ORD-78321.", "session_id": "sess-cust001",
+                })
+                body = resp.json()
+
+        cc = [tc for tc in body["trace"]["tool_calls"] if tc["action"] == "cancel_item"]
+        assert cc and cc[0]["status"] == "error", "refund failure must surface as an error"
+
+        # The item must still be active — never cancelled without a refund trace.
+        orders = json.loads((data_dir / "orders.json").read_text())
+        order  = next(o for o in orders["orders"] if o["order_id"] == "ORD-78321")
+        item2  = next(i for i in order["items"] if i["line_id"] == 2)
+        assert item2["status"] != "cancelled", "item was cancelled despite refund failure"
+
+    def test_process_refund_unsupported_method_blocked(self, client):
+        """Handler-layer backstop: if an unsupported method reaches process_refund
+        (e.g. a name the message guard doesn't recognise), it errors and disburses
+        no refund — never silently coerced to an 'original' refund. Neutral message
+        so the deterministic message-level guard does not pre-empt the handler."""
+        body = _run(client, "Process the refund for order ORD-78323.", [
+            make_tool_mock("process_refund", {
+                "order_id": "ORD-78323", "amount_inr": 1000.0, "method": "gift card",
+            }),
+            make_text_mock("I can refund to your original method or a supported one."),
+            make_approved_mock(),
+        ])
+        pr = [tc for tc in body["trace"]["tool_calls"] if tc["action"] == "process_refund"]
+        assert pr and pr[0]["status"] == "error"
+
+    def test_cancel_item_unsupported_method_blocked(self, client):
+        """Handler-layer backstop: cancel_item with an unsupported refund_method
+        errors BEFORE cancelling, so the item is never cancelled-without-a-valid-
+        refund. Neutral message so the message-level guard does not pre-empt it."""
+        body = _run(client, "Cancel item 2 from ORD-78321.", [
+            make_tool_mock("cancel_item", {
+                "order_id": "ORD-78321", "line_id": 2, "refund_method": "gift card",
+            }),
+            make_text_mock("We can't refund to that — please choose a supported method."),
+            make_approved_mock(),
+        ])
+        cc = [tc for tc in body["trace"]["tool_calls"] if tc["action"] == "cancel_item"]
+        assert cc and cc[0]["status"] == "error"
+
+    def test_cancel_item_missing_line_id_clean_error(self, client):
+        """A cancel_item call with NO line_id (e.g. a confirmation staged without
+        it) must return a clean error, never crash with KeyError → 500."""
+        body = _run(client, "Cancel an item on ORD-78321.", [
+            make_tool_mock("cancel_item", {"order_id": "ORD-78321"}),  # line_id omitted
+            make_text_mock("Which item would you like to cancel?"),
+            make_approved_mock(),
+        ])
+        cc = [tc for tc in body["trace"]["tool_calls"] if tc["action"] == "cancel_item"]
+        assert cc and cc[0]["status"] == "error"
+
+    def test_cancel_item_invalid_line_id_clean_error(self, client):
+        """A non-integer line_id must surface a clean error, not an exception."""
+        body = _run(client, "Cancel an item on ORD-78321.", [
+            make_tool_mock("cancel_item", {"order_id": "ORD-78321", "line_id": "abc"}),
+            make_text_mock("That doesn't look like a valid item."),
+            make_approved_mock(),
+        ])
+        cc = [tc for tc in body["trace"]["tool_calls"] if tc["action"] == "cancel_item"]
+        assert cc and cc[0]["status"] == "error"
+
+
+class TestOrderIdNormalization:
+    """A bare 5-digit order number must resolve to canonical ORD-XXXXX for tools."""
+
+    def test_clean_order_id_normalises_bare_number(self, patched_env):
+        from agent.graph import _clean_order_id as c
+        assert c("10001")                       == "ORD-10001"
+        assert c("order 10001")                 == "ORD-10001"
+        assert c("#10001")                      == "ORD-10001"
+        assert c("pull up info about 10001")    == "ORD-10001"
+        # Already-canonical and edge cases must be untouched.
+        assert c("ORD-10001")                   == "ORD-10001"
+        assert c("ORD-123456")                  == "ORD-123456"  # 6 digits: never truncated
+        assert c("1234")                        == "1234"        # 4 digits: not an order number
+
+    def test_get_order_resolves_bare_number(self, client):
+        """'pull up info about 78321' → get_order('78321') resolves ORD-78321."""
+        body = _run(client, "pull up info about 78321", [
+            make_tool_mock("get_order", {"order_id": "78321"}),
+            make_text_mock("Here are the details for your order."),
+            make_approved_mock(),
+        ])
+        go = [tc for tc in body["trace"]["tool_calls"] if tc["action"] == "get_order"]
+        assert go and go[0]["status"] == "success", "bare order number did not resolve"
+
+
+class TestMixedEscalationResponder:
+    """A turn that both completes actions AND escalates must narrate both — the
+    escalation holding message must not swallow completed refunds/cancels (Q1 bug)."""
+
+    def test_is_pure_escalation_turn_unit(self, patched_env):
+        from agent.graph import _is_pure_escalation_turn as p
+        mixed = [
+            {"tool": "process_refund", "success": True, "escalated": False,
+             "data": {"refund": {"amount_inr": 800}}},
+            {"tool": "process_refund", "success": True, "escalated": True,
+             "data": {"case_id": "CASE-X"}},
+        ]
+        pure = [
+            {"tool": "get_order", "success": True, "escalated": False, "data": {}},
+            {"tool": "process_refund", "success": True, "escalated": True,
+             "data": {"case_id": "CASE-Y"}},
+        ]
+        assert p(mixed) is False, "mixed turn must use the full responder"
+        assert p(pure) is True, "pure escalation uses the deterministic holding message"
+        assert p([]) is False
+
+    def test_mixed_turn_uses_full_responder(self, client):
+        """Disburse a refund on one delivered order AND escalate another (over-limit)
+        in one turn → the LLM responder is used, not the canned escalation text."""
+        custom = "Your Rs.800 refund is on its way; the high-value item is under specialist review."
+        body = _run(client, "Refund the mouse on ORD-78323 and the gaming laptop on ORD-78500.", [
+            make_multi_tool_mock([
+                ("process_refund", {"order_id": "ORD-78323", "amount_inr": 800.0, "method": "original"}),
+                ("process_refund", {"order_id": "ORD-78500", "amount_inr": 42000.0, "method": "original"}),
+            ]),
+            make_text_mock(custom),
+            make_approved_mock(),
+        ])
+        pr = [tc for tc in body["trace"]["tool_calls"] if tc["action"] == "process_refund"]
+        assert len(pr) == 2, "both refunds should have been attempted"
+        # The mixed turn must NOT collapse to the deterministic escalation holding text.
+        assert body["response"] == custom
+        assert "apologise for any inconvenience" not in body["response"].lower()
+
+    def test_pure_escalation_uses_canned_message(self, client):
+        """A turn that ONLY escalates still gets the deterministic holding message
+        (no LLM responder call)."""
+        body = _run(client, "Refund my gaming laptop on ORD-78500.", [
+            make_tool_mock("process_refund", {"order_id": "ORD-78500", "amount_inr": 42000.0, "method": "original"}),
+            make_approved_mock(),  # spare; pure-escalation path is deterministic
+        ])
+        resp = body["response"].lower()
+        assert "specialist review" in resp or "apologise for any inconvenience" in resp
 
 
 # ===========================================================================
@@ -376,3 +623,136 @@ class TestValidators:
         from utils.validators import validate_line_id
         with pytest.raises(ValueError):
             validate_line_id(0)
+
+
+# ===========================================================================
+# Batch hardening fixes (retry/backoff, confirmation gating, scrub, SLA, audit)
+# ===========================================================================
+
+class TestBatchHardening:
+
+    # --- #3 LLM retry/backoff -------------------------------------------------
+    def test_llm_retry_then_succeeds(self, monkeypatch):
+        import agent.graph as g
+
+        class _Transient(Exception):
+            pass
+
+        calls = {"n": 0}
+
+        class _Completions:
+            async def create(self, **kw):
+                calls["n"] += 1
+                if calls["n"] < 3:
+                    raise _Transient("boom")
+                return "OK"
+
+        class _Client:
+            chat = type("C", (), {"completions": _Completions()})()
+
+        monkeypatch.setattr(g, "_LLM_TRANSIENT_ERRORS", (_Transient,))
+        monkeypatch.setattr(g, "_LLM_RETRY_BASE_DELAY_S", 0.0)
+        monkeypatch.setattr(g, "_get_groq_client", lambda: _Client())
+        out = asyncio.get_event_loop().run_until_complete(
+            g._chat_completion_with_retry(model="m", messages=[]))
+        assert out == "OK" and calls["n"] == 3, "should retry transient errors then succeed"
+
+    def test_llm_retry_reraises_after_exhaustion(self, monkeypatch):
+        import agent.graph as g
+
+        class _Transient(Exception):
+            pass
+
+        class _Completions:
+            async def create(self, **kw):
+                raise _Transient("always")
+
+        class _Client:
+            chat = type("C", (), {"completions": _Completions()})()
+
+        monkeypatch.setattr(g, "_LLM_TRANSIENT_ERRORS", (_Transient,))
+        monkeypatch.setattr(g, "_LLM_RETRY_BASE_DELAY_S", 0.0)
+        monkeypatch.setattr(g, "_LLM_MAX_RETRIES", 2)
+        monkeypatch.setattr(g, "_get_groq_client", lambda: _Client())
+        with pytest.raises(_Transient):
+            asyncio.get_event_loop().run_until_complete(
+                g._chat_completion_with_retry(model="m", messages=[]))
+
+    # --- #2 / #4 confirmation gating classifier -------------------------------
+    def test_cancel_needs_confirmation_classifier(self, patched_env):
+        from agent.graph import _cancel_needs_confirmation
+        order = {"status": "processing", "items": [
+            {"line_id": 1, "name": "Dell Laptop", "unit_price": 55000.0, "status": "active"},
+            {"line_id": 2, "name": "Wireless Mouse", "unit_price": 800.0, "status": "active"},
+            {"line_id": 3, "name": "Cotton Kurta Blue", "unit_price": 899.0, "status": "active"},
+            {"line_id": 4, "name": "Cotton Kurta Green", "unit_price": 899.0, "status": "active"},
+        ]}
+        assert _cancel_needs_confirmation(order, 1) is True   # high-value
+        assert _cancel_needs_confirmation(order, 2) is False  # low-value, unambiguous
+        assert _cancel_needs_confirmation(order, 3) is True   # ambiguous (Blue/Green)
+        assert _cancel_needs_confirmation(order, 4) is True   # ambiguous
+        # not cancellable → None (cancel_item returns its own error instead)
+        shipped = {"status": "shipped", "items": order["items"]}
+        assert _cancel_needs_confirmation(shipped, 1) is None
+
+    def test_ambiguous_sibling_detection(self, patched_env):
+        from agent.graph import _has_ambiguous_sibling
+        items = [
+            {"line_id": 1, "name": "Cotton Kurta Blue", "status": "active"},
+            {"line_id": 2, "name": "Cotton Kurta Green", "status": "active"},
+            {"line_id": 3, "name": "Bamboo Desk Organizer", "status": "active"},
+        ]
+        order = {"items": items}
+        assert _has_ambiguous_sibling(order, items[0]) is True
+        assert _has_ambiguous_sibling(order, items[2]) is False
+
+    # --- #5 invented-refund-option scrub --------------------------------------
+    def test_scrub_invented_refund_options(self, patched_env):
+        from agent.graph import _scrub_invented_refund_options
+        text = ("We can refund you via:\n"
+                "* To your original payment method\n"
+                "* As store credit\n"
+                "* Via bank transfer\n"
+                "Which would you prefer?")
+        out = _scrub_invented_refund_options(text)
+        assert "store credit" not in out.lower()
+        assert "bank transfer" not in out.lower()
+        assert "original payment method" in out
+        # nothing to scrub → unchanged
+        clean = "Refund to your original payment method within 5 days."
+        assert _scrub_invented_refund_options(clean) == clean
+
+    def test_sanitize_response_strips_invented_options(self, patched_env):
+        from agent.graph import _sanitize_response
+        out = _sanitize_response("Options: as a gift card, or store credit, or your original method.")
+        assert "gift card" not in out.lower() and "store credit" not in out.lower()
+
+    # --- #8 data-sourced refund SLA -------------------------------------------
+    def test_refund_sla_is_data_sourced(self, patched_env):
+        import agent.graph as g
+        assert isinstance(g._REFUND_SLA_DAYS, int)
+        assert f"{g._REFUND_SLA_DAYS} business days" in g._RESPONSE_SYSTEM
+
+    # --- #9 audit retry -------------------------------------------------------
+    def test_safe_audit_retries_then_succeeds(self, patched_env, monkeypatch):
+        import agent.graph as g
+        calls = {"n": 0}
+
+        def flaky(*a, **k):
+            calls["n"] += 1
+            if calls["n"] < 3:
+                raise RuntimeError("disk blip")
+
+        monkeypatch.setattr(g._audit, "append", flaky)
+        g._safe_audit("CUST-001", "ORD-78321", "test_action", {"k": "v"})
+        assert calls["n"] == 3, "should retry the audit write before giving up"
+
+    def test_safe_audit_never_raises_on_total_failure(self, patched_env, monkeypatch):
+        import agent.graph as g
+
+        def always_fail(*a, **k):
+            raise RuntimeError("audit down")
+
+        monkeypatch.setattr(g._audit, "append", always_fail)
+        # must not raise — a failed audit can never abort an already-committed action
+        g._safe_audit("CUST-001", "ORD-78321", "test_action", {"k": "v"})

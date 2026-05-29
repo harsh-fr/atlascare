@@ -33,6 +33,12 @@ async def lifespan(app: FastAPI):
     _assert_env_vars()
     logger.info("AtlasCare starting up — environment validated.")
 
+    # Derive support files (users/sessions/refunds) from the canonical data
+    # files if they're missing. Lets a freshly-supplied data folder (just the
+    # 4 canonical files) boot without a manual setup step. Idempotent — never
+    # overwrites existing files.
+    _bootstrap_support_files()
+
     checkpointer            = MemorySaver()
     app.state.graph         = build_graph(checkpointer)
     app.state.checkpointer  = checkpointer
@@ -46,6 +52,22 @@ async def lifespan(app: FastAPI):
     yield
 
     logger.info("AtlasCare shutting down.")
+
+
+def _bootstrap_support_files() -> None:
+    """Generate any missing derived support files from the canonical inputs."""
+    try:
+        from data.derive_support_files import ensure_support_files
+
+        report = ensure_support_files()
+        for line in report["generated"]:
+            logger.info("Support file generated | %s", line)
+        for line in report["warnings"]:
+            logger.warning("Support file bootstrap | %s", line)
+        for line in report["errors"]:
+            logger.error("Support file bootstrap | %s", line)
+    except Exception as exc:  # never block startup on bootstrap
+        logger.error("Support-file bootstrap failed: %s", exc)
 
 
 def _assert_env_vars() -> None:

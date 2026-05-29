@@ -227,6 +227,20 @@ class TestVagueHelpDetection:
         assert "doesn't look" not in body
         assert "invalid"      not in body
 
+    @pytest.mark.parametrize("msg", ["hi", "Hello", "hey there", "good morning"])
+    def test_greeting_is_personalised_by_name(self, client, msg):
+        """A standalone greeting is answered deterministically, by first name,
+        with a professional offer to help — not a generic improvised line."""
+        responses = [make_done_mock("ignored — greeting is deterministic")]
+        mock_client = MagicMock()
+        mock_client.chat.completions.create = AsyncMock(side_effect=responses)
+        with patch("agent.graph._groq_client", mock_client):
+            resp = client.post("/query", json={"message": msg, "session_id": "sess-cust001"})
+        body = resp.json()["response"]
+        # CUST-001 is "Test Customer 001" in fixtures → first name "Test".
+        assert "Test" in body
+        assert "assist" in body.lower() or "help" in body.lower()
+
     def test_vague_help_does_not_say_invalid_format(self, client):
         responses = [
             make_done_mock("I need your order ID."),
@@ -249,9 +263,11 @@ class TestVagueHelpDetection:
 class TestRefundWithAmount:
 
     def test_refund_explicit_amount_succeeds(self, client):
-        body = _run(client, "I want a refund of Rs.24999 for order ORD-78400.", [
+        # ORD-78323 is delivered — a direct refund is only valid post-delivery
+        # (processing orders must be cancelled via cancel_item, which auto-refunds).
+        body = _run(client, "I want a refund of Rs.24999 for order ORD-78323.", [
             make_tool_mock("process_refund", {
-                "order_id": "ORD-78400", "amount_inr": 24999.0, "method": "original",
+                "order_id": "ORD-78323", "amount_inr": 24999.0, "method": "original",
             }),
             make_text_mock("Your refund of ₹24,999 has been initiated."),
             make_approved_mock(),

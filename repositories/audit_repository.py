@@ -1,6 +1,7 @@
 import json
 import logging
 import os
+import threading
 import uuid
 from datetime import datetime, timezone
 from typing import Any
@@ -26,6 +27,7 @@ class AuditRepository:
             data_path or os.getenv("AUDIT_LOG_PATH", _DEFAULT_DATA_PATH)
         )
         self._events: list[dict[str, Any]] = []
+        self._lock = threading.Lock()
         self._load()
         logger.debug(
             "AuditRepository loaded | path=%s | events=%d",
@@ -47,8 +49,9 @@ class AuditRepository:
             "action":     action,
             "data":       data,
         }
-        self._events.append(event)
-        self._flush()
+        with self._lock:
+            self._events.append(event)
+            self._flush()
         logger.info(
             "AuditRepository.append | event_id=%s | customer=%s | order=%s | action=%s",
             event["event_id"], customer_id, order_id, action,

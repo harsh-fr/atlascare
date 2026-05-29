@@ -204,12 +204,14 @@ class TestEvaluatorApproval:
 
     def test_evaluator_runs_for_process_refund(self, client):
         """process_refund → evaluator calls LLM."""
+        # ORD-78323 is delivered — direct refunds are only valid post-delivery
+        # (processing orders are handled via cancel_item, not process_refund).
         body = _run(
             client,
-            "Refund ₹800 for order ORD-78321.",
+            "Refund ₹800 for order ORD-78323.",
             [
                 make_tool_mock("process_refund", {
-                    "order_id": "ORD-78321", "amount_inr": 800.0, "method": "original",
+                    "order_id": "ORD-78323", "amount_inr": 800.0, "method": "original",
                 }),
                 make_text_mock("Refund of ₹800 initiated."),
                 make_approved_mock(),

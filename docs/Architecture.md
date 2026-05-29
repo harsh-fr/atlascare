@@ -47,6 +47,43 @@ repo    repo   repo     repo
   data/*.json  (JSON-backed, atomic writes)
 ```
 
+### 2.1 Agent Graph (LangGraph)
+
+The compiled `StateGraph` wired in `agent/graph.py::build_graph()`, rendered directly from the live graph via `get_graph().draw_mermaid()`. Solid arrows are unconditional edges; dotted arrows are conditional routes (labelled with the branch taken).
+
+```mermaid
+graph TD;
+	__start__([__start__]):::first
+	confirmation_check(confirmation_check)
+	pre_guardrail(pre_guardrail)
+	tool_agent(tool_agent)
+	tool_executor(tool_executor)
+	post_guardrail(post_guardrail)
+	responder(responder)
+	evaluator(evaluator)
+	__end__([__end__]):::last
+	__start__ --> confirmation_check;
+	confirmation_check -. end .-> __end__;
+	confirmation_check -.-> post_guardrail;
+	confirmation_check -.-> pre_guardrail;
+	evaluator -. end .-> __end__;
+	evaluator -.-> responder;
+	post_guardrail -. end .-> __end__;
+	post_guardrail -.-> responder;
+	pre_guardrail -. end .-> __end__;
+	pre_guardrail -.-> tool_agent;
+	responder --> evaluator;
+	tool_agent -. respond .-> post_guardrail;
+	tool_agent -. tools .-> tool_executor;
+	tool_executor -.-> post_guardrail;
+	tool_executor -.-> tool_agent;
+	classDef default fill:#f2f0ff,line-height:1.2
+	classDef first fill-opacity:0
+	classDef last fill:#bfb6fc
+```
+
+**Node roles:** `confirmation_check` resolves a pending high-value confirmation from a prior turn before anything else; `pre_guardrail`/`post_guardrail` enforce deterministic policy (§6); `tool_agent` selects tools or writes a direct reply; `tool_executor` runs tools (and may loop back to `tool_agent` for a follow-up call); `responder` phrases the reply; `evaluator` checks the reply against tool results and can route back to `responder` for one retry. To regenerate this diagram: `build_graph().get_graph().draw_mermaid()`.
+
 ---
 
 ## 3. Request Pipeline

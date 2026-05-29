@@ -1,6 +1,7 @@
 import json
 import logging
 import os
+import threading
 from typing import Any
 
 from utils.file_ops import atomic_json_write, sort_by_recency
@@ -16,6 +17,7 @@ class OrderRepository:
             data_path or os.getenv("ORDERS_DATA_PATH", _DEFAULT_DATA_PATH)
         )
         self._orders: dict[str, dict[str, Any]] = {}
+        self._lock = threading.Lock()
         self._load()
         logger.debug("OrderRepository loaded | path=%s | count=%d", self._path, len(self._orders))
 
@@ -42,8 +44,9 @@ class OrderRepository:
             raise ValueError("Cannot save order without 'order_id'.")
         order_id = order_id.upper()
         order["order_id"] = order_id
-        self._orders[order_id] = order
-        self._flush()
+        with self._lock:
+            self._orders[order_id] = order
+            self._flush()
         logger.debug("OrderRepository.save | order_id=%s", order_id)
 
     def _load(self) -> None:

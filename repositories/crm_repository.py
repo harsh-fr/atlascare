@@ -1,6 +1,7 @@
 import json
 import logging
 import os
+import threading
 from typing import Any
 
 from utils.file_ops import atomic_json_write, sort_by_recency
@@ -17,6 +18,7 @@ class CrmRepository:
         )
         self._customers: dict[str, dict[str, Any]] = {}
         self._cases:     dict[str, dict[str, Any]] = {}
+        self._lock = threading.Lock()
         self._load()
         logger.debug(
             "CrmRepository loaded | path=%s | customers=%d | cases=%d",
@@ -58,16 +60,18 @@ class CrmRepository:
         case_id = case.get("case_id")
         if not case_id:
             raise ValueError("Cannot save case without 'case_id'.")
-        self._cases[case_id] = case
-        self._flush()
+        with self._lock:
+            self._cases[case_id] = case
+            self._flush()
         logger.debug("CrmRepository.save_case | case_id=%s", case_id)
 
     def save_customer(self, customer: dict[str, Any]) -> None:
         customer_id = customer.get("customer_id")
         if not customer_id:
             raise ValueError("Cannot save customer without 'customer_id'.")
-        self._customers[customer_id] = customer
-        self._flush()
+        with self._lock:
+            self._customers[customer_id] = customer
+            self._flush()
         logger.debug("CrmRepository.save_customer | customer_id=%s", customer_id)
 
     def _load(self) -> None:

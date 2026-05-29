@@ -1,6 +1,7 @@
 import logging
 from typing import Any
 
+from repositories.crm_repository import CrmRepository
 from repositories.order_repository import OrderRepository
 from services.order_service import OrderService
 
@@ -27,6 +28,9 @@ class AddressNotFoundError(OmsError):
 
 
 class OmsTool:
+    # Order statuses past the point where shipping details can change.
+    _ADDRESS_IMMUTABLE_STATUSES = {"shipped", "delivered", "cancelled"}
+
     def __init__(self) -> None:
         self._order_repo = OrderRepository()
         self._order_svc  = OrderService()
@@ -98,14 +102,15 @@ class OmsTool:
         if order is None:
             raise OrderNotFoundError(f"Order '{order_id}' not found.")
 
-        immutable_statuses = {"shipped", "delivered", "cancelled"}
-        if order["status"] in immutable_statuses:
+        if order["status"] in self._ADDRESS_IMMUTABLE_STATUSES:
             raise OrderNotMutableError(
                 f"Cannot update address for order '{order_id}' "
                 f"with status '{order['status']}' — the package is already in transit."
             )
 
-        from repositories.crm_repository import CrmRepository
+        # Read the CRM profile fresh on each call: address labels are looked up
+        # against the current profile, which may have been edited since startup.
+        # (A cached repo would serve a stale snapshot of the saved addresses.)
         customer = CrmRepository().find_customer_by_id(customer_id)
         if customer is None:
             raise AddressNotFoundError(f"Customer profile not found for '{customer_id}'.")
@@ -167,8 +172,7 @@ class OmsTool:
         if order is None:
             raise OrderNotFoundError(f"Order '{order_id}' not found.")
 
-        immutable_statuses = {"shipped", "delivered", "cancelled"}
-        if order["status"] in immutable_statuses:
+        if order["status"] in self._ADDRESS_IMMUTABLE_STATUSES:
             raise OrderNotMutableError(
                 f"Cannot update address for order '{order_id}' "
                 f"with status '{order['status']}' — the package is already in transit."

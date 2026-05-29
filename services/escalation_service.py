@@ -57,8 +57,13 @@ class EscalationService:
     to this service.
     """
 
-    def __init__(self) -> None:
-        self._crm_repo = CrmRepository()
+    def __init__(self, crm_repo: CrmRepository | None = None) -> None:
+        # Accept an injected repo so the owning CrmTool can share ONE
+        # CrmRepository instance. Otherwise a case saved here would be invisible
+        # to the tool's separate repo until process restart (its in-memory cache
+        # would be stale), so e.g. list_cases wouldn't show a case created the
+        # same turn.
+        self._crm_repo = crm_repo or CrmRepository()
         logger.debug("EscalationService initialised.")
 
     # ------------------------------------------------------------------

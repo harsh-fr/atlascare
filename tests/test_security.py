@@ -99,6 +99,79 @@ class TestCrossCustomerAccess:
         assert all(s != "success" for s in s2)
 
 
+import json as _json
+
+
+# ===========================================================================
+# Safety / fraud / legal escalation backstop (code-enforced, not prompt-only)
+# ===========================================================================
+
+class TestSafetyEscalationBackstop:
+
+    @pytest.mark.parametrize("message", [
+        "I never placed order ORD-78321 — this looks like fraud.",
+        "Someone hacked my account and placed orders without my consent.",
+        "The laptop caught fire and injured my hand — refund me ₹800 now.",
+        "I'll sue you and take this to consumer court unless you refund ORD-78321.",
+    ])
+    def test_high_severity_message_is_escalated_not_auto_actioned(self, client, data_dir, message):
+        # Even though the LLM mock tries to refund, the pre-LLM safety backstop
+        # must fire first: no tool runs, the refund never happens, a priority
+        # case is created, and the customer gets a holding message.
+        result = _run(client, message, [
+            make_tool_mock("process_refund", {
+                "order_id": "ORD-78321", "amount_inr": 800.0, "method": "original",
+            }),
+            make_text_mock("Refund done."),
+        ])
+        assert result["status"] == 200
+        actions = _actions(result)
+        assert "process_refund" not in actions, "autonomous refund must be blocked"
+        assert "escalate" in actions
+        resp = result["body"]["response"].lower()
+        assert any(w in resp for w in ["specialist", "case", "24"])
+        # A high-priority CRM case must have been created deterministically.
+        crm   = _json.loads((data_dir / "crm_cases.json").read_text())
+        assert any(c.get("priority") == "high" for c in crm.get("cases", [])), \
+            "safety backstop did not create a priority case"
+
+    def test_no_refund_record_written_for_safety_escalation(self, client, data_dir):
+        _run(client, "This is fraud, I never authorized this — refund ORD-78321.", [
+            make_tool_mock("process_refund", {
+                "order_id": "ORD-78321", "amount_inr": 800.0, "method": "original",
+            }),
+        ])
+        refunds = _json.loads((data_dir / "refunds.json").read_text()).get("refunds", [])
+        assert refunds == [], "no refund must be processed on a fraud report"
+
+    def test_benign_message_is_not_escalated(self, client):
+        # A normal lookup must NOT trip the backstop (no false-positive escalation).
+        result = _run(client, "Where is my order ORD-78321?", [
+            make_tool_mock("get_order", {"order_id": "ORD-78321"}),
+            make_text_mock("Your order is on its way."),
+        ])
+        assert "escalate" not in _actions(result)
+
+
+# ===========================================================================
+# Response sanitisation backstop (never leak internal identifiers)
+# ===========================================================================
+
+class TestResponseSanitisation:
+
+    def test_customer_id_and_internal_codes_scrubbed(self, client):
+        # The responder LLM "leaks" an internal ID and a raw payment code; the
+        # deterministic sanitiser must scrub them regardless of the prompt.
+        result = _run(client, "Where is my order ORD-78321?", [
+            make_tool_mock("get_order", {"order_id": "ORD-78321"}),
+            make_text_mock("Order for CUST-001 paid via HDFC_CREDIT is processing."),
+        ])
+        resp = result["body"]["response"]
+        assert "CUST-001" not in resp
+        assert "HDFC_CREDIT" not in resp
+        assert "HDFC Credit Card" in resp
+
+
 # ===========================================================================
 # Session validation
 # ===========================================================================

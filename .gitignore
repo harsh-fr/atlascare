@@ -23,7 +23,7 @@ wheels/
 venv/
 env/
 ENV/
-
+.claude
 .env
 .env.*
 !.env.example
@@ -71,3 +71,13 @@ credentials.json
 *.h5
 *.ckpt
 models/
+
+# Derived/runtime data — regenerated from the 4 canonical files on app startup
+# (data/derive_support_files.py). Only the canonical files are committed.
+data/users.json
+data/sessions.json
+data/refunds.json
+data/order_audit_log.json
+
+# External e2e harness output (not produced by this repo)
+_e2e_results.json
