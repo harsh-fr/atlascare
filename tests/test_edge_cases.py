@@ -119,6 +119,33 @@ class TestInvalidOrderInputs:
         cc = [tc for tc in body["trace"]["tool_calls"] if tc["action"] == "cancel_item"]
         assert cc and cc[0]["status"] == "error"
 
+    def test_high_value_cancel_escalates_refund_to_specialist(self, client, data_dir):
+        """Cancelling a >Rs.25,000 item must hand the refund to a specialist via a
+        high-priority case — never cancel-without-refund silently.
+
+        Regression for the bug where _handle_cancel_item swallowed
+        RefundThresholdError into a note and created no case, unlike the
+        _handle_process_refund path.
+        """
+        # ORD-78321 line 1 is a Rs.55,000 laptop on a 'processing' order.
+        body = _run(client, "Cancel item 1 from ORD-78321.", [
+            make_tool_mock("cancel_item", {"order_id": "ORD-78321", "line_id": 1}),
+        ])
+        cc = [tc for tc in body["trace"]["tool_calls"] if tc["action"] == "cancel_item"]
+        assert cc and cc[0]["status"] == "success"
+
+        # A high-priority CRM case must exist for the escalated refund.
+        crm   = json.loads((data_dir / "crm_cases.json").read_text())
+        cases = crm.get("cases", [])
+        assert any(
+            c.get("order_id") == "ORD-78321" and c.get("priority") == "high"
+            for c in cases
+        ), "high-value cancel did not create a specialist refund case"
+
+        # The customer is told a specialist will follow up — not that it's done.
+        resp = body["response"].lower()
+        assert any(w in resp for w in ["specialist", "case", "review", "24"])
+
 
 # ===========================================================================
 # Missing data

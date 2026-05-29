@@ -1,159 +1,251 @@
 {
   "events": [
     {
-      "event_id": "EVT-935134EE",
-      "timestamp": "2026-05-28T17:23:06.469314+00:00",
+      "event_id": "EVT-C9075841",
+      "timestamp": "2026-05-29T08:46:15.995616+00:00",
       "customer_id": "CUST-001",
-      "order_id": "ORD-10008",
-      "action": "escalation_created",
+      "order_id": "ORD-78321",
+      "action": "item_cancelled",
       "data": {
-        "case_id": "CASE-44015E",
-        "reason": "Damaged laptop and threat of legal action"
+        "line_id": 1,
+        "item_name": "Dell Inspiron 15 Laptop",
+        "unit_price": 55000.0,
+        "quantity": 1,
+        "new_order_total": 2300.0,
+        "refund_escalated": true,
+        "refund_case_id": "CASE-57162C"
       }
     },
     {
-      "event_id": "EVT-F9D6A51A",
-      "timestamp": "2026-05-28T17:24:06.047034+00:00",
+      "event_id": "EVT-DFA8DF82",
+      "timestamp": "2026-05-29T08:46:16.099223+00:00",
       "customer_id": "CUST-001",
-      "order_id": "ORD-10008",
-      "action": "escalation_created",
+      "order_id": "ORD-78321",
+      "action": "item_cancelled",
       "data": {
-        "case_id": "CASE-9E4A98",
-        "reason": "Laptop arrived broken, urgent resolution required"
+        "line_id": 1,
+        "item_name": "Dell Inspiron 15 Laptop",
+        "unit_price": 55000.0,
+        "quantity": 1,
+        "new_order_total": 2300.0,
+        "refund_escalated": true,
+        "refund_case_id": "CASE-90ED68"
       }
     },
     {
-      "event_id": "EVT-035D6A56",
-      "timestamp": "2026-05-28T17:45:41.785839+00:00",
+      "event_id": "EVT-4C4F26AB",
+      "timestamp": "2026-05-29T08:46:16.203747+00:00",
       "customer_id": "CUST-001",
-      "order_id": "ORD-10006",
+      "order_id": "ORD-78321",
+      "action": "item_cancelled",
+      "data": {
+        "line_id": 1,
+        "item_name": "Dell Inspiron 15 Laptop",
+        "unit_price": 55000.0,
+        "quantity": 1,
+        "new_order_total": 2300.0,
+        "refund_escalated": true,
+        "refund_case_id": "CASE-26F7DA"
+      }
+    },
+    {
+      "event_id": "EVT-F534745D",
+      "timestamp": "2026-05-29T08:46:16.758531+00:00",
+      "customer_id": "CUST-001",
+      "order_id": "ORD-78321",
+      "action": "item_cancelled",
+      "data": {
+        "line_id": 3,
+        "item_name": "Wireless Mouse",
+        "unit_price": 800.0,
+        "quantity": 1,
+        "new_order_total": 56500.0,
+        "refund_id": "REF-78321-D9C362BB",
+        "refund_amount": 800.0,
+        "refund_method": "HDFC_CREDIT"
+      }
+    },
+    {
+      "event_id": "EVT-608508C6",
+      "timestamp": "2026-05-29T08:46:20.741974+00:00",
+      "customer_id": "CUST-001",
+      "order_id": "ORD-78321",
+      "action": "item_cancelled",
+      "data": {
+        "line_id": 1,
+        "item_name": "Dell Inspiron 15 Laptop",
+        "unit_price": 55000.0,
+        "quantity": 1,
+        "new_order_total": 2300.0,
+        "refund_escalated": true,
+        "refund_case_id": "CASE-DC3B37"
+      }
+    },
+    {
+      "event_id": "EVT-4622BCD0",
+      "timestamp": "2026-05-29T08:46:22.280536+00:00",
+      "customer_id": "CUST-001",
+      "order_id": "ORD-78500",
+      "action": "escalation_created",
+      "data": {
+        "case_id": "CASE-BDB6BA",
+        "reason": "Customer reports damaged product."
+      }
+    },
+    {
+      "event_id": "EVT-476C8D01",
+      "timestamp": "2026-05-29T08:46:22.477664+00:00",
+      "customer_id": "CUST-001",
+      "order_id": "ORD-78321",
+      "action": "item_cancelled",
+      "data": {
+        "line_id": 3,
+        "item_name": "Wireless Mouse",
+        "unit_price": 800.0,
+        "quantity": 1,
+        "new_order_total": 56500.0,
+        "refund_id": "REF-78321-01B7191B",
+        "refund_amount": 800.0,
+        "refund_method": "HDFC_CREDIT"
+      }
+    },
+    {
+      "event_id": "EVT-E9C9EAAA",
+      "timestamp": "2026-05-29T08:46:22.577428+00:00",
+      "customer_id": "CUST-001",
+      "order_id": "ORD-78323",
       "action": "refund_processed",
       "data": {
-        "refund_id": "REF-10006-81CEDC23",
-        "amount_inr": 25000.0,
+        "refund_id": "REF-78323-CEAED13C",
+        "amount_inr": 800.0,
         "method": "original",
         "escalated": false
       }
     },
     {
-      "event_id": "EVT-7FF60FF0",
-      "timestamp": "2026-05-28T18:31:24.156371+00:00",
+      "event_id": "EVT-D45950BF",
+      "timestamp": "2026-05-29T08:46:22.675038+00:00",
       "customer_id": "CUST-001",
-      "order_id": "ORD-10014",
-      "action": "escalation_created",
-      "data": {
-        "case_id": "CASE-E2E93A",
-        "reason": "unauthorized order placement"
-      }
-    },
-    {
-      "event_id": "EVT-23508368",
-      "timestamp": "2026-05-28T18:31:36.975410+00:00",
-      "customer_id": "CUST-001",
-      "order_id": "ORD-10008",
-      "action": "escalation_created",
-      "data": {
-        "case_id": "CASE-4D7342",
-        "reason": "Laptop is damaged and customer is threatening legal action"
-      }
-    },
-    {
-      "event_id": "EVT-606565C6",
-      "timestamp": "2026-05-28T18:31:50.323500+00:00",
-      "customer_id": "CUST-001",
-      "order_id": "ORD-10008",
-      "action": "escalation_created",
-      "data": {
-        "case_id": "CASE-C5AA79",
-        "reason": "customer requests to speak to a manager"
-      }
-    },
-    {
-      "event_id": "EVT-EBF05EE4",
-      "timestamp": "2026-05-28T18:32:44.733019+00:00",
-      "customer_id": "CUST-001",
-      "order_id": "ORD-10010",
-      "action": "item_cancelled",
-      "data": {
-        "line_id": 1,
-        "item_name": "Havells 1200mm Ceiling Fan",
-        "unit_price": 2500.0,
-        "quantity": 1,
-        "new_order_total": 4300.0
-      }
-    },
-    {
-      "event_id": "EVT-CC622C0A",
-      "timestamp": "2026-05-28T18:32:44.737910+00:00",
-      "customer_id": "CUST-001",
-      "order_id": "ORD-10010",
-      "action": "item_cancelled",
-      "data": {
-        "line_id": 2,
-        "item_name": "Philips EasySpeed Steam Iron",
-        "unit_price": 1299.0,
-        "quantity": 1,
-        "new_order_total": 3001.0
-      }
-    },
-    {
-      "event_id": "EVT-435A9F5E",
-      "timestamp": "2026-05-28T18:32:44.741911+00:00",
-      "customer_id": "CUST-001",
-      "order_id": "ORD-10010",
+      "order_id": "ORD-78321",
       "action": "item_cancelled",
       "data": {
         "line_id": 3,
-        "item_name": "V-Guard Voltage Stabilizer",
-        "unit_price": 3001.0,
+        "item_name": "Wireless Mouse",
+        "unit_price": 800.0,
         "quantity": 1,
-        "new_order_total": 0.0
-      }
-    },
-    {
-      "event_id": "EVT-82A7674A",
-      "timestamp": "2026-05-28T20:08:38.027720+00:00",
-      "customer_id": "CUST-001",
-      "order_id": "ORD-10008",
-      "action": "escalation_created",
-      "data": {
-        "case_id": "CASE-3F864D",
-        "reason": "Dell laptop arrived completely damaged."
-      }
-    },
-    {
-      "event_id": "EVT-535042BF",
-      "timestamp": "2026-05-28T20:21:36.193548+00:00",
-      "customer_id": "CUST-001",
-      "order_id": "ORD-10008",
-      "action": "escalation_created",
-      "data": {
-        "case_id": "CASE-110FE9",
-        "reason": "Dell laptop arrived completely damaged."
-      }
-    },
-    {
-      "event_id": "EVT-AD3EA0C5",
-      "timestamp": "2026-05-29T03:46:27.772018+00:00",
-      "customer_id": "CUST-001",
-      "order_id": "ORD-10002",
-      "action": "item_cancelled",
-      "data": {
-        "line_id": 2,
-        "item_name": "Machine Installation Stand",
-        "unit_price": 500.0,
-        "quantity": 1,
-        "new_order_total": 18200.0,
-        "refund_id": "REF-10002-97E38814",
-        "refund_amount": 500.0,
+        "new_order_total": 56500.0,
+        "refund_id": "REF-78321-B4DF2E76",
+        "refund_amount": 800.0,
         "refund_method": "HDFC_CREDIT"
       }
     },
     {
-      "event_id": "EVT-D08BC900",
-      "timestamp": "2026-05-29T04:22:13.019840+00:00",
+      "event_id": "EVT-36D449B2",
+      "timestamp": "2026-05-29T08:46:22.777845+00:00",
       "customer_id": "CUST-001",
-      "order_id": "ORD-10001",
+      "order_id": "ORD-78321",
+      "action": "item_cancelled",
+      "data": {
+        "line_id": 3,
+        "item_name": "Wireless Mouse",
+        "unit_price": 800.0,
+        "quantity": 1,
+        "new_order_total": 56500.0,
+        "refund_id": "REF-78321-4E1D20AD",
+        "refund_amount": 800.0,
+        "refund_method": "HDFC_CREDIT"
+      }
+    },
+    {
+      "event_id": "EVT-B079B15E",
+      "timestamp": "2026-05-29T08:46:22.905376+00:00",
+      "customer_id": "CUST-001",
+      "order_id": "ORD-78321",
+      "action": "item_cancelled",
+      "data": {
+        "line_id": 3,
+        "item_name": "Wireless Mouse",
+        "unit_price": 800.0,
+        "quantity": 1,
+        "new_order_total": 56500.0,
+        "refund_id": "REF-78321-59D816D7",
+        "refund_amount": 800.0,
+        "refund_method": "HDFC_CREDIT"
+      }
+    },
+    {
+      "event_id": "EVT-9D5C5031",
+      "timestamp": "2026-05-29T08:46:23.017910+00:00",
+      "customer_id": "CUST-001",
+      "order_id": "ORD-78321",
+      "action": "item_cancelled",
+      "data": {
+        "line_id": 3,
+        "item_name": "Wireless Mouse",
+        "unit_price": 800.0,
+        "quantity": 1,
+        "new_order_total": 56500.0,
+        "refund_id": "REF-78321-25D5A6EA",
+        "refund_amount": 800.0,
+        "refund_method": "HDFC_CREDIT"
+      }
+    },
+    {
+      "event_id": "EVT-9B51C55A",
+      "timestamp": "2026-05-29T08:46:23.135555+00:00",
+      "customer_id": "CUST-001",
+      "order_id": "ORD-78321",
+      "action": "item_cancelled",
+      "data": {
+        "line_id": 3,
+        "item_name": "Wireless Mouse",
+        "unit_price": 800.0,
+        "quantity": 1,
+        "new_order_total": 56500.0,
+        "refund_id": "REF-78321-591D2ACB",
+        "refund_amount": 800.0,
+        "refund_method": "HDFC_CREDIT"
+      }
+    },
+    {
+      "event_id": "EVT-4D7D85EE",
+      "timestamp": "2026-05-29T08:46:23.366840+00:00",
+      "customer_id": "CUST-001",
+      "order_id": "ORD-78321",
+      "action": "item_cancelled",
+      "data": {
+        "line_id": 3,
+        "item_name": "Wireless Mouse",
+        "unit_price": 800.0,
+        "quantity": 1,
+        "new_order_total": 56500.0,
+        "refund_id": "REF-78321-A79C95C4",
+        "refund_amount": 800.0,
+        "refund_method": "HDFC_CREDIT"
+      }
+    },
+    {
+      "event_id": "EVT-DA4CEB35",
+      "timestamp": "2026-05-29T08:46:23.493401+00:00",
+      "customer_id": "CUST-001",
+      "order_id": "ORD-78321",
+      "action": "item_cancelled",
+      "data": {
+        "line_id": 2,
+        "item_name": "Laptop Backpack",
+        "unit_price": 1500.0,
+        "quantity": 1,
+        "new_order_total": 55800.0,
+        "refund_id": "REF-78321-6BD4A301",
+        "refund_amount": 1500.0,
+        "refund_method": "HDFC_CREDIT"
+      }
+    },
+    {
+      "event_id": "EVT-E92569F1",
+      "timestamp": "2026-05-29T08:46:23.499400+00:00",
+      "customer_id": "CUST-001",
+      "order_id": "ORD-78321",
       "action": "address_updated",
       "data": {
         "address_label": "office",
@@ -166,71 +258,330 @@
       }
     },
     {
-      "event_id": "EVT-90C6F93F",
-      "timestamp": "2026-05-29T04:26:18.320460+00:00",
+      "event_id": "EVT-1FB761E6",
+      "timestamp": "2026-05-29T08:46:25.050196+00:00",
       "customer_id": "CUST-001",
-      "order_id": "ORD-10002",
-      "action": "address_updated",
-      "data": {
-        "address_label": null,
-        "new_address": {
-          "line1": "7 Park Street",
-          "city": "Bengaluru",
-          "state": "",
-          "pincode": "560001"
-        }
-      }
-    },
-    {
-      "event_id": "EVT-802E7539",
-      "timestamp": "2026-05-29T04:28:21.116479+00:00",
-      "customer_id": "CUST-001",
-      "order_id": "ORD-10002",
+      "order_id": "ORD-78321",
       "action": "item_cancelled",
       "data": {
-        "line_id": 3,
-        "item_name": "Laundry Mesh Bag",
-        "unit_price": 200.0,
+        "line_id": 2,
+        "item_name": "Laptop Backpack",
+        "unit_price": 1500.0,
         "quantity": 1,
-        "new_order_total": 18000.0,
-        "refund_id": "REF-10002-9BEDDCEF",
-        "refund_amount": 200.0,
+        "new_order_total": 55800.0,
+        "refund_id": "REF-78321-748B7F10",
+        "refund_amount": 1500.0,
         "refund_method": "HDFC_CREDIT"
       }
     },
     {
-      "event_id": "EVT-2D858DE4",
-      "timestamp": "2026-05-29T04:32:55.040965+00:00",
+      "event_id": "EVT-9A7C3EAC",
+      "timestamp": "2026-05-29T08:46:25.055196+00:00",
       "customer_id": "CUST-001",
-      "order_id": "ORD-10011",
+      "order_id": "ORD-78321",
+      "action": "address_updated",
+      "data": {
+        "address_label": "office",
+        "new_address": {
+          "line1": "4th Floor, Prestige Tower, Outer Ring Road",
+          "city": "Bengaluru",
+          "state": "Karnataka",
+          "pincode": "560103"
+        }
+      }
+    },
+    {
+      "event_id": "EVT-6BEC6E48",
+      "timestamp": "2026-05-29T08:46:25.171245+00:00",
+      "customer_id": "CUST-001",
+      "order_id": "ORD-78321",
+      "action": "item_cancelled",
+      "data": {
+        "line_id": 2,
+        "item_name": "Laptop Backpack",
+        "unit_price": 1500.0,
+        "quantity": 1,
+        "new_order_total": 55800.0,
+        "refund_id": "REF-78321-123C86A5",
+        "refund_amount": 1500.0,
+        "refund_method": "HDFC_CREDIT"
+      }
+    },
+    {
+      "event_id": "EVT-E8023A41",
+      "timestamp": "2026-05-29T08:46:25.176243+00:00",
+      "customer_id": "CUST-001",
+      "order_id": "ORD-78321",
+      "action": "address_updated",
+      "data": {
+        "address_label": "office",
+        "new_address": {
+          "line1": "4th Floor, Prestige Tower, Outer Ring Road",
+          "city": "Bengaluru",
+          "state": "Karnataka",
+          "pincode": "560103"
+        }
+      }
+    },
+    {
+      "event_id": "EVT-DE95C3DC",
+      "timestamp": "2026-05-29T08:46:25.398559+00:00",
+      "customer_id": "CUST-001",
+      "order_id": "ORD-78321",
+      "action": "item_cancelled",
+      "data": {
+        "line_id": 2,
+        "item_name": "Laptop Backpack",
+        "unit_price": 1500.0,
+        "quantity": 1,
+        "new_order_total": 55800.0,
+        "refund_id": "REF-78321-44A1E30C",
+        "refund_amount": 1500.0,
+        "refund_method": "HDFC_CREDIT"
+      }
+    },
+    {
+      "event_id": "EVT-AD33FC54",
+      "timestamp": "2026-05-29T08:46:25.406558+00:00",
+      "customer_id": "CUST-001",
+      "order_id": "ORD-78321",
+      "action": "address_updated",
+      "data": {
+        "address_label": "office",
+        "new_address": {
+          "line1": "4th Floor, Prestige Tower, Outer Ring Road",
+          "city": "Bengaluru",
+          "state": "Karnataka",
+          "pincode": "560103"
+        }
+      }
+    },
+    {
+      "event_id": "EVT-BC21CF47",
+      "timestamp": "2026-05-29T08:46:25.799664+00:00",
+      "customer_id": "CUST-001",
+      "order_id": "ORD-78321",
+      "action": "item_cancelled",
+      "data": {
+        "line_id": 2,
+        "item_name": "Laptop Backpack",
+        "unit_price": 1500.0,
+        "quantity": 1,
+        "new_order_total": 55800.0,
+        "refund_id": "REF-78321-CD2EF48E",
+        "refund_amount": 1500.0,
+        "refund_method": "HDFC_CREDIT"
+      }
+    },
+    {
+      "event_id": "EVT-CD207E48",
+      "timestamp": "2026-05-29T08:46:25.807664+00:00",
+      "customer_id": "CUST-001",
+      "order_id": "ORD-78321",
+      "action": "address_updated",
+      "data": {
+        "address_label": "office",
+        "new_address": {
+          "line1": "4th Floor, Prestige Tower, Outer Ring Road",
+          "city": "Bengaluru",
+          "state": "Karnataka",
+          "pincode": "560103"
+        }
+      }
+    },
+    {
+      "event_id": "EVT-2BB4E86E",
+      "timestamp": "2026-05-29T08:46:26.147394+00:00",
+      "customer_id": "CUST-001",
+      "order_id": "ORD-78321",
+      "action": "item_cancelled",
+      "data": {
+        "line_id": 2,
+        "item_name": "Laptop Backpack",
+        "unit_price": 1500.0,
+        "quantity": 1,
+        "new_order_total": 55800.0,
+        "refund_id": "REF-78321-E1BAB80C",
+        "refund_amount": 1500.0,
+        "refund_method": "HDFC_CREDIT"
+      }
+    },
+    {
+      "event_id": "EVT-D22C4E9E",
+      "timestamp": "2026-05-29T08:46:26.155391+00:00",
+      "customer_id": "CUST-001",
+      "order_id": "ORD-78321",
+      "action": "address_updated",
+      "data": {
+        "address_label": "office",
+        "new_address": {
+          "line1": "4th Floor, Prestige Tower, Outer Ring Road",
+          "city": "Bengaluru",
+          "state": "Karnataka",
+          "pincode": "560103"
+        }
+      }
+    },
+    {
+      "event_id": "EVT-19EDEB21",
+      "timestamp": "2026-05-29T08:46:26.270662+00:00",
+      "customer_id": "CUST-001",
+      "order_id": "ORD-78500",
+      "action": "escalation_created",
+      "data": {
+        "case_id": "CASE-579B7F",
+        "reason": "Customer requesting full refund for damaged laptop. Exceeds threshold."
+      }
+    },
+    {
+      "event_id": "EVT-747ED047",
+      "timestamp": "2026-05-29T08:46:26.378179+00:00",
+      "customer_id": "CUST-001",
+      "order_id": "ORD-78500",
+      "action": "escalation_created",
+      "data": {
+        "case_id": "CASE-2F31D9",
+        "reason": "Customer requesting full refund for damaged laptop. Exceeds threshold."
+      }
+    },
+    {
+      "event_id": "EVT-4FAA2D70",
+      "timestamp": "2026-05-29T08:46:26.488388+00:00",
+      "customer_id": "CUST-001",
+      "order_id": "ORD-78500",
+      "action": "escalation_created",
+      "data": {
+        "case_id": "CASE-2CCE26",
+        "reason": "Customer requesting full refund for damaged laptop. Exceeds threshold."
+      }
+    },
+    {
+      "event_id": "EVT-F6971002",
+      "timestamp": "2026-05-29T08:46:26.594405+00:00",
+      "customer_id": "CUST-001",
+      "order_id": "ORD-78500",
+      "action": "escalation_created",
+      "data": {
+        "case_id": "CASE-D1EDD4",
+        "reason": "Customer requesting full refund for damaged laptop. Exceeds threshold."
+      }
+    },
+    {
+      "event_id": "EVT-6AF371DE",
+      "timestamp": "2026-05-29T08:46:26.698253+00:00",
+      "customer_id": "CUST-001",
+      "order_id": "ORD-78500",
+      "action": "escalation_created",
+      "data": {
+        "case_id": "CASE-C94772",
+        "reason": "Customer requesting full refund for damaged laptop. Exceeds threshold."
+      }
+    },
+    {
+      "event_id": "EVT-2BDF3850",
+      "timestamp": "2026-05-29T08:46:26.811774+00:00",
+      "customer_id": "CUST-001",
+      "order_id": "ORD-78500",
+      "action": "escalation_created",
+      "data": {
+        "case_id": "CASE-E86834",
+        "reason": "Customer requesting full refund for damaged laptop. Exceeds threshold."
+      }
+    },
+    {
+      "event_id": "EVT-735A5F6F",
+      "timestamp": "2026-05-29T08:46:27.015410+00:00",
+      "customer_id": "CUST-001",
+      "order_id": "ORD-78500",
+      "action": "escalation_created",
+      "data": {
+        "case_id": "CASE-4A3078",
+        "reason": "Customer requesting full refund for damaged laptop. Exceeds threshold."
+      }
+    },
+    {
+      "event_id": "EVT-826F8637",
+      "timestamp": "2026-05-29T08:46:27.185878+00:00",
+      "customer_id": "CUST-001",
+      "order_id": "ORD-78500",
+      "action": "escalation_created",
+      "data": {
+        "case_id": "CASE-28B568",
+        "reason": "Customer requesting full refund for damaged laptop. Exceeds threshold."
+      }
+    },
+    {
+      "event_id": "EVT-346EA34C",
+      "timestamp": "2026-05-29T08:46:27.287479+00:00",
+      "customer_id": "CUST-001",
+      "order_id": "ORD-78500",
+      "action": "escalation_created",
+      "data": {
+        "case_id": "CASE-3BBD0C",
+        "reason": "Customer requesting full refund for damaged laptop. Exceeds threshold."
+      }
+    },
+    {
+      "event_id": "EVT-3AA3E83F",
+      "timestamp": "2026-05-29T08:46:27.399098+00:00",
+      "customer_id": "CUST-001",
+      "order_id": "ORD-78321",
+      "action": "item_cancelled",
+      "data": {
+        "line_id": 3,
+        "item_name": "Wireless Mouse",
+        "unit_price": 800.0,
+        "quantity": 1,
+        "new_order_total": 56500.0,
+        "refund_id": "REF-78321-B29311F6",
+        "refund_amount": 800.0,
+        "refund_method": "HDFC_CREDIT"
+      }
+    },
+    {
+      "event_id": "EVT-86613836",
+      "timestamp": "2026-05-29T08:46:27.505711+00:00",
+      "customer_id": "CUST-001",
+      "order_id": "ORD-78321",
+      "action": "item_cancelled",
+      "data": {
+        "line_id": 3,
+        "item_name": "Wireless Mouse",
+        "unit_price": 800.0,
+        "quantity": 1,
+        "new_order_total": 56500.0,
+        "refund_id": "REF-78321-6AC3F739",
+        "refund_amount": 800.0,
+        "refund_method": "HDFC_CREDIT"
+      }
+    },
+    {
+      "event_id": "EVT-AC6115F8",
+      "timestamp": "2026-05-29T08:46:27.604269+00:00",
+      "customer_id": "CUST-001",
+      "order_id": "ORD-78321",
+      "action": "address_updated",
+      "data": {
+        "address_label": "office",
+        "new_address": {
+          "line1": "4th Floor, Prestige Tower, Outer Ring Road",
+          "city": "Bengaluru",
+          "state": "Karnataka",
+          "pincode": "560103"
+        }
+      }
+    },
+    {
+      "event_id": "EVT-C1EA192F",
+      "timestamp": "2026-05-29T08:46:30.036688+00:00",
+      "customer_id": "CUST-001",
+      "order_id": "ORD-78323",
       "action": "refund_processed",
       "data": {
-        "refund_id": "REF-10011-6595711B",
-        "amount_inr": 8999.0,
-        "method": "UPI",
+        "refund_id": "REF-78323-B4B2DD39",
+        "amount_inr": 24999.0,
+        "method": "original",
         "escalated": false
-      }
-    },
-    {
-      "event_id": "EVT-800F42F0",
-      "timestamp": "2026-05-29T04:44:50.906709+00:00",
-      "customer_id": "CUST-002",
-      "order_id": "ORD-20003",
-      "action": "escalation_created",
-      "data": {
-        "case_id": "CASE-DE2C85",
-        "reason": "return Sony TV"
-      }
-    },
-    {
-      "event_id": "EVT-D926C095",
-      "timestamp": "2026-05-29T04:48:55.291958+00:00",
-      "customer_id": "CUST-001",
-      "order_id": "ORD-10011",
-      "action": "escalation_created",
-      "data": {
-        "case_id": "CASE-7A3302",
-        "reason": "return and refund for delivered order"
       }
     }
   ]

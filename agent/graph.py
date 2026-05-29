@@ -11,7 +11,7 @@ from langgraph.graph import StateGraph, START, END
 from langgraph.checkpoint.memory import MemorySaver
 from openai import AsyncOpenAI, BadRequestError
 
-from agent.guardrails import Guardrails
+from agent.guardrails import AUTO_REFUND_LIMIT_INR, Guardrails, detect_safety_escalation
 from tools.oms_tool import OmsTool
 from tools.crm_tool import CrmTool
 from tools.payment_tool import PaymentTool, RefundThresholdError
@@ -28,9 +28,28 @@ _payment    = PaymentTool()
 _kb         = KbTool()
 _audit      = AuditRepository()
 
+# Human-readable form of the config-driven auto-refund threshold, interpolated
+# into tool descriptions and the agent prompt so the model's escalation logic
+# tracks payment_config.json instead of a hardcoded number. Single source of
+# truth: agent.guardrails.AUTO_REFUND_LIMIT_INR.
+_REFUND_LIMIT_STR = f"Rs.{AUTO_REFUND_LIMIT_INR:,.0f}"
+
+
+# Cap retained conversation history per thread. The checkpointer (MemorySaver)
+# never evicts, and session_ids are unbounded/client-supplied, so an unbounded
+# `messages` list is a memory-exhaustion vector. We keep only the most recent
+# turns — far more than the model ever sees (tool_agent uses the last 8) and
+# more than any look-back consumer needs.
+_MAX_HISTORY_MESSAGES = 40
+
+
+def _append_capped(left: list, right: list) -> list:
+    """Reducer: append new messages, retaining only the last N to bound memory."""
+    return (left + right)[-_MAX_HISTORY_MESSAGES:]
+
 
 class AtlasCareState(TypedDict):
-    messages:              Annotated[list, operator.add]
+    messages:              Annotated[list, _append_capped]
     customer_id:           str
     session_id:            str
     guardrail_blocked:     bool
@@ -85,7 +104,7 @@ TOOLS = [
     }},
     {"type": "function", "function": {
         "name": "process_refund",
-        "description": "Process a refund. Max Rs.25,000 for autonomous processing.",
+        "description": f"Process a refund. Max {_REFUND_LIMIT_STR} for autonomous processing.",
         "parameters": {"type": "object", "required": ["order_id", "amount_inr", "method"], "properties": {
             "order_id":   {"type": "string"},
             "amount_inr": {"type": "number"},
@@ -192,10 +211,17 @@ _AGENT_SYSTEM = (
     "When a tool call is required, call it immediately — do not announce or explain what you are about to do.\n"
     "Always fetch actual order data via tools before acting or responding — "
     "never rely solely on details the customer provides about their order.\n"
-    # Bug 5: always use get_order when a specific order ID is present
+    # Bug 5 / F-03: always use get_order for a specific ID; never append list_orders after get_order
     "When the customer's message contains a specific order ID (format ORD-XXXXX), ALWAYS use "
     "get_order to fetch that specific order — never use list_orders. "
     "list_orders is only for browsing all orders when no specific order ID is given.\n"
+    # F-03: suppress spurious list_orders after get_order
+    "GET_ORDER CONTEXT RULE: If a get_order result for a specific order is already present in the "
+    "conversation context, do NOT call list_orders — you already have the order data you need. "
+    "Making a list_orders call after get_order wastes a tool call and produces no new information.\n"
+    # F-04: list_cases scope
+    "list_cases is ONLY for explicit customer requests to view their support-case history. "
+    "Never call it for order tracking, status, shipping, refund, or delivery queries.\n"
     "When cancelling an item the customer refers to by name, you MUST call get_order first "
     "to find the correct line_id for that item. Never guess a line_id.\n"
     "For refunds, default method to 'original' unless the customer specifies otherwise.\n"
@@ -204,14 +230,19 @@ _AGENT_SYSTEM = (
     "and ask them to either use a saved label or provide the full address (street, city, state, pincode). "
     "Once they supply the details, use update_address_raw to apply the address directly.\n"
     "'Return' and 'refund' mean the same thing — always look up the order and help the customer.\n"
-    # Bug 1: COD rule strengthened to code-level enforcement
+    # Bug 1 / F-02: COD rule — ask for method before ANY tool, including create_crm_case/escalate
     "COD REFUND RULE (MANDATORY):\n"
     "For any order with payment_method='COD':\n"
     "  - NEVER call process_refund with method='original' — cash cannot be refunded electronically.\n"
     "  - NEVER accept 'cash', 'same method', 'same payment method', or 'original' as a refund method.\n"
     "  - If the customer requests a return/refund and has NOT provided a specific electronic method "
-    "(UPI, HDFC Credit Card, ICICI Debit Card, SBI Net Banking), ask for one BEFORE calling any tool.\n"
+    "(UPI, HDFC Credit Card, ICICI Debit Card, SBI Net Banking), respond asking for one BEFORE calling ANY tool. "
+    "This includes create_crm_case and escalate — do NOT escalate a plain COD return; ask for method first.\n"
     "  - Only proceed with cancel_item or process_refund once you have an explicit electronic method.\n"
+    # F-10: COD processing-order cancellation — no charge was ever collected
+    "  - For COD orders with status=placed or processing: if the customer cancels, "
+    "the customer was never charged. Say 'no charge was collected on delivery, so no refund is needed.' "
+    "Do NOT say 'COD refund requires a specialist'.\n"
     # Bug 2: no re-call instruction
     "LIST_ORDERS RE-CALL RULE: If list_orders results are already present in the conversation "
     "context (i.e. a tool result with an 'orders' array has already been returned), do NOT call "
@@ -221,15 +252,29 @@ _AGENT_SYSTEM = (
     "When the customer asks to filter, search, or browse orders by ANY criteria (date, month, year, "
     "status, amount, product name, or any combination) — call list_orders once to fetch all orders. "
     "The response model will apply the customer's filter criteria to the results.\n"
-    # Bug 4: status cross-check
+    # Bug 4 / F-06: status cross-check — plain message only, no CRM/escalation/confirmation
     "STATUS CROSS-CHECK (MANDATORY): After fetching an order with get_order, compare the actual "
     "order status in the data against any status the customer stated in their message. "
-    "If they conflict (e.g. customer says 'delivered' but status is 'shipped', or customer says "
-    "'not delivered' but status is 'delivered'), do NOT proceed with the action the customer "
-    "requested based on their stated status. Instead, call NO further tools and respond directly, "
-    "noting the discrepancy and explaining the correct next step based on the actual status. "
+    "If they conflict (e.g. customer says 'delivered' but status is 'shipped'), do NOT proceed with "
+    "the action the customer requested based on their stated status. "
+    "Call NO further tools — do NOT call escalate, create_crm_case, or request_confirmation. "
+    "Respond directly with a single plain message correcting the mismatch and explaining the "
+    "correct next step. "
     "Example: customer says 'my delivered order ORD-10003' but status is 'shipped' → "
-    "do not escalate or initiate a return; inform the customer the order is still in transit.\n"
+    "tell the customer the order is still in transit and suggest waiting for delivery.\n"
+    # F-05: cancelled-state guard — respond directly without mutation tools
+    "CANCELLED ORDER GUARD: Before calling cancel_item or process_refund, inspect the get_order "
+    "result. If order status='cancelled' AND all items are cancelled AND total_amount=0.0, "
+    "do NOT call any mutation tool — respond directly telling the customer the order was previously "
+    "cancelled and no further action is needed.\n"
+    # F-07: eligibility pre-check before mutation tools
+    "PRE-MUTATION STATUS CHECK:\n"
+    "  - cancel_item: only call for orders with status='placed' or 'processing'. "
+    "If status is 'shipped', 'delivered', or 'cancelled', do NOT call cancel_item — "
+    "explain the limitation directly.\n"
+    "  - update_address: only call for orders with status='placed' or 'processing'. "
+    "If status is 'shipped', 'delivered', or 'cancelled', do NOT call update_address — "
+    "explain that the address cannot be changed.\n"
     # Bug 6: escalation rules — add damaged/defective items
     "ESCALATION RULES — immediately call the escalate tool (no other action) when the customer:\n"
     "  - Claims they did not place an order, or the order was placed without their knowledge or consent.\n"
@@ -242,6 +287,11 @@ _AGENT_SYSTEM = (
     "Do NOT cancel, refund, or take any other automated action in these cases — escalate only.\n"
     "When creating a CRM case (not an escalation) for a damaged, defective, or counterfeit item, "
     "always pass priority='high' to create_crm_case.\n"
+    # F-01: confirmation rule — return/refund on delivered orders → escalate, never confirm
+    "RETURN / REFUND ON DELIVERED ORDERS: When a customer wants to return or refund a delivered "
+    "order, NEVER call request_confirmation. Determine the action directly:\n"
+    f"  - If the order total exceeds {_REFUND_LIMIT_STR} → call escalate immediately (no confirmation gate).\n"
+    f"  - If the order total is {_REFUND_LIMIT_STR} or below → call process_refund directly.\n"
     "CONFIRMATION RULE: Never generate a plain-text response asking the customer "
     "for confirmation (e.g. 'Are you sure?', 'Can you confirm?'). "
     "Call request_confirmation ONLY when ALL of the following are true: "
@@ -271,8 +321,10 @@ _RESPONSE_SYSTEM = (
     "Do not open with sycophantic filler ('I'm so glad you reached out', 'Great question', etc.). "
     "Get to the information quickly, keep the tone natural and helpful, and close with a brief offer to assist further.\n"
     "Treat every message — including repeats — with the same tone and completeness as the first.\n"
-    "If a tool returns an 'order not found' or similar error: respond with genuine empathy — "
-    "acknowledge the frustration, let the customer know you couldn't find it, and ask them to verify the ID. "
+    # F-09: ownership error → standard "not found" message, no crash
+    "If a tool returns an ownership error or 'order not found for current session': respond with "
+    "genuine empathy — tell the customer you couldn't find that order and ask them to verify the ID. "
+    "Never mention 'session', 'ownership', or internal error codes. "
     "Vary your phrasing naturally; avoid repeating the same sentence structure every time. "
     "Never say the order ID is 'malformed' or 'invalid format'.\n"
     # Bug 4: stronger SOURCE OF TRUTH instruction
@@ -322,7 +374,11 @@ _RESPONSE_SYSTEM = (
     "- Use the 'created_at' field for date/month/year filtering. "
     "The field is an ISO-8601 timestamp (e.g. '2026-06-15T10:30:00+00:00'). "
     "Parse month and year from it when needed.\n"
-    "- When filtering by amount, compare against the 'total_amount' field."
+    "- When filtering by amount, compare against the 'total_amount' field.\n\n"
+    # F-11: surface individual item statuses
+    "ORDER ITEMS DISPLAY RULE: When listing or describing the items in an order, always include "
+    "each item's status (active / cancelled / shipped). Clearly distinguish cancelled items from "
+    "active ones — never list cancelled items without noting they are cancelled.\n"
 )
 
 
@@ -332,10 +388,32 @@ _groq_client_key: str | None = None
 def _get_groq_client() -> AsyncOpenAI:
     global _groq_client, _groq_client_key
     current_key = os.environ["GROQ_API_KEY"]
-    if _groq_client is None or _groq_client_key != current_key:
+    # Recreate only when there is no client yet, or when a previously-created
+    # client's key has actually rotated. A client set externally (e.g. a test
+    # mock) leaves _groq_client_key as None and must NOT be overwritten.
+    if _groq_client is None or (
+        _groq_client_key is not None and _groq_client_key != current_key
+    ):
         _groq_client     = AsyncOpenAI(api_key=current_key, base_url=os.environ["GROQ_BASE_URL"])
         _groq_client_key = current_key
     return _groq_client
+
+def _safe_audit(customer_id: str, order_id: str, action: str, data: dict) -> None:
+    """Write an audit record for a completed action.
+
+    Failures are logged at ERROR with an AUDIT_FAILURE marker (so ops can alert
+    on a missing trail) but never abort the in-flight turn — a refund/cancel that
+    already succeeded must not be reversed by an audit-write error. Centralises
+    the previously-duplicated try/except blocks.
+    """
+    try:
+        _audit.append(customer_id, order_id, action, data)
+    except Exception as exc:
+        logger.error(
+            "AUDIT_FAILURE | action=%s | customer=%s | order=%s | error=%s",
+            action, customer_id, order_id, exc,
+        )
+
 
 class OwnershipError(Exception):
     pass
@@ -365,7 +443,15 @@ _METHOD_MAP = {
 }
 
 def _normalise_refund_method(method: str) -> str:
-    return _METHOD_MAP.get(method.lower().strip(), "original")
+    key    = method.lower().strip()
+    mapped = _METHOD_MAP.get(key)
+    if mapped is None:
+        if key and key != "original":
+            logger.warning(
+                "Unrecognized refund method %r — defaulting to 'original'.", method
+            )
+        return "original"
+    return mapped
 
 _VALID_ORDER_RE   = re.compile(r'\bORD-\d{5}\b', re.IGNORECASE)
 
@@ -540,6 +626,18 @@ _MUTATING_TOOLS = frozenset({
     "create_crm_case", "escalate",
 })
 
+# Does the customer's message ask for an action (not just a lookup)? Used to
+# decide whether to loop back for a get_order→mutation chain, and whether a
+# read-only result still warrants an evaluator pass.
+_MUTATION_INTENT_RE = re.compile(
+    r"\b(cancel|refund|return|re-?ship|update|change|modify|replace|escalat|"
+    r"ship\s+to|new\s+address|change\s+address)\b",
+    re.IGNORECASE,
+)
+
+def _has_mutation_intent(message: str) -> bool:
+    return bool(_MUTATION_INTENT_RE.search(message or ""))
+
 _CASUAL_RE = re.compile(
     r"\b(yo|hey|sup|hi|hello|howdy|hiya|what'?s up|gonna|wanna|gotta|lol|lmao|tbh|ngl|dunno|ya|yep|nope|cool|dude|bro)\b"
     r"|[!]{2,}|\b(where'?s|what'?s|how'?s|it'?s)\b",
@@ -551,6 +649,107 @@ def _tone_hint(message: str) -> str:
     if _CASUAL_RE.search(message):
         return "Match the customer's casual, relaxed tone — keep it friendly and informal."
     return "Use a warm, professional tone."
+
+
+# A standalone greeting with no actual request — handled deterministically so the
+# bot opens professionally and by name instead of an LLM-improvised generic line.
+_GREETING_ONLY_RE = re.compile(
+    r"^\s*(?:hi+|hey+|hello+|hiya|howdy|yo|hola|namaste|greetings|"
+    r"good\s+(?:morning|afternoon|evening|day))"
+    r"[\s,.!~-]*(?:there|team|atlascare)?[\s,.!?]*$",
+    re.IGNORECASE,
+)
+
+
+def _is_pure_greeting(message: str) -> bool:
+    """True when the message is only a greeting (no order ID, question, or request)."""
+    return bool(_GREETING_ONLY_RE.match(message or ""))
+
+
+async def _customer_first_name(customer_id: str) -> str:
+    """Best-effort first name for a personalised greeting; '' if unavailable."""
+    try:
+        customer = await _crm.get_customer(customer_id)
+    except Exception:
+        return ""
+    name = (customer.get("name") or "").strip()
+    return name.split()[0] if name else ""
+
+
+# ---------------------------------------------------------------------------
+# Code-enforced safety backstops (not prompt-only)
+# ---------------------------------------------------------------------------
+# Friendly names for internal payment codes — the responder is told to render
+# these, but we also scrub them deterministically so a model slip can't leak
+# internal identifiers to the customer.
+_INTERNAL_METHOD_LABELS = {
+    "HDFC_CREDIT":    "HDFC Credit Card",
+    "ICICI_DEBIT":    "ICICI Debit Card",
+    "SBI_NETBANKING": "SBI Net Banking",
+}
+_CUSTOMER_ID_LEAK_RE = re.compile(
+    r"\s*(?:\(?\s*customer\s+id\s*[:#-]?\s*)?\bCUST-\d{3}\b\)?", re.IGNORECASE
+)
+
+
+def _sanitize_response(text: str) -> str:
+    """Backstop for the 'never reveal internal data' policy: strip customer IDs
+    and replace internal payment-method codes with human-readable names, even if
+    the LLM ignored the prompt instruction to do so."""
+    if not text:
+        return text
+    for code, friendly in _INTERNAL_METHOD_LABELS.items():
+        text = re.sub(rf"\b{code}\b", friendly, text)
+    text = _CUSTOMER_ID_LEAK_RE.sub("", text)
+    # Tidy whitespace/punctuation left by redaction.
+    text = re.sub(r"[ \t]{2,}", " ", text)
+    text = re.sub(r"\s+([.,!?])", r"\1", text)
+    return text.strip()
+
+
+async def _force_safety_escalation(state: AtlasCareState, tracer: Tracer,
+                                   message: str, reason: str) -> dict:
+    """Deterministically escalate a high-severity safety/fraud/legal message:
+    create a priority case and return a holding response WITHOUT running the LLM
+    or any tool. Guarantees no autonomous refund/cancel on these turns."""
+    customer_id = state["customer_id"]
+    oids = _extract_order_ids(message)
+    oid  = oids[0] if oids else "N/A"
+
+    t0, case_id, status = time.monotonic(), "pending", "error"
+    try:
+        case = await _crm.create_case(
+            customer_id=customer_id,
+            order_id=oid,
+            reason=(f"Auto-escalated by safety guardrail [{reason}]. Customer message "
+                    "requires specialist handling; autonomous action withheld."),
+            amount_inr=None,
+            trace_id=tracer.trace_id,
+            priority="high",
+        )
+        case_id, status = case["case_id"], "success"
+    except Exception as exc:
+        logger.error("Safety backstop escalation failed | reason=%s | error=%s", reason, exc)
+    tracer.record_tool_call(
+        "safety_guardrail", "escalate", status,
+        {"latency_ms": int((time.monotonic() - t0) * 1000), "reason": reason},
+    )
+    logger.warning(
+        "SAFETY BACKSTOP fired | reason=%s | customer=%s | trace=%s",
+        reason, customer_id, tracer.trace_id,
+    )
+    return {
+        "guardrail_blocked": True,
+        "task_complete":     True,
+        "final_response": (
+            "Thank you for letting us know — this is something our specialist team needs "
+            "to handle.\n\n"
+            f"I've created a priority support case (Case ID: **{case_id}**), and a specialist "
+            "will reach out to you within 24 hours. For your security, I won't make any changes "
+            "to your orders or payments on this myself.\n\n"
+            "We appreciate your patience and will get this resolved for you."
+        ),
+    }
 
 
 def _responder_model(user_msg: str, execution_summary: list[dict]) -> str:
@@ -608,12 +807,37 @@ async def _handle_cancel_item(args, customer_id, tracer):
     result = await _oms.cancel_item(oid, int(args["line_id"]))
     refund_amount    = result["unit_price"] * result["quantity"]
     payment_method   = requested_method if requested_method else original_method
+    escalated        = False
     if payment_method == "COD":
         result["refund_note"] = "COD order — refund requires manual processing via a specialist."
     else:
         method = _normalise_refund_method(payment_method)
         try:
             result["refund"] = await _payment.process_refund(oid, refund_amount, method, customer_id)
+        except RefundThresholdError:
+            # The item is already cancelled; a high-value refund cannot be
+            # auto-processed. Hand it to a specialist via a priority case so the
+            # customer is never left cancelled-but-unrefunded (matches the
+            # process_refund path — the two must not diverge).
+            case = await _crm.create_case(
+                customer_id=customer_id,
+                order_id=oid,
+                reason=(
+                    f"High-value refund of ₹{refund_amount:,.2f} for cancelled item "
+                    f"'{result['name']}' requires specialist review."
+                ),
+                amount_inr=refund_amount,
+                trace_id=tracer.trace_id,
+                priority="high",
+            )
+            # "case_id" key so the deterministic escalation responder surfaces it.
+            result["case_id"]        = case["case_id"]
+            result["refund_case_id"] = case["case_id"]
+            result["refund_note"] = (
+                "Item cancelled. The refund requires specialist review, so a "
+                "priority case has been created and a specialist will follow up."
+            )
+            escalated = True
         except Exception as exc:
             logger.warning("Auto-refund after cancel_item failed | order=%s | error=%s", oid, exc)
             result["refund_note"] = f"Item cancelled. Refund initiation failed: {exc}"
@@ -629,12 +853,12 @@ async def _handle_cancel_item(args, customer_id, tracer):
         audit_data["refund_id"]     = result["refund"].get("refund_id")
         audit_data["refund_amount"] = result["refund"].get("amount_inr")
         audit_data["refund_method"] = result["refund"].get("method")
-    try:
-        _audit.append(customer_id, oid, "item_cancelled", audit_data)
-    except Exception as exc:
-        logger.warning("Audit write failed | action=item_cancelled | order=%s | %s", oid, exc)
+    if escalated:
+        audit_data["refund_escalated"] = True
+        audit_data["refund_case_id"]   = result.get("refund_case_id")
+    _safe_audit(customer_id, oid, "item_cancelled", audit_data)
 
-    return result, "success", False
+    return result, "success", escalated
 
 async def _handle_process_refund(args, customer_id, tracer):
     oid    = _clean_order_id(args["order_id"])
@@ -699,15 +923,12 @@ async def _handle_process_refund(args, customer_id, tracer):
 
     try:
         refund = await _payment.process_refund(oid, amount_inr, method, customer_id)
-        try:
-            _audit.append(customer_id, oid, "refund_processed", {
-                "refund_id":  refund.get("refund_id"),
-                "amount_inr": refund.get("amount_inr"),
-                "method":     refund.get("method"),
-                "escalated":  False,
-            })
-        except Exception as exc:
-            logger.warning("Audit write failed | action=refund_processed | order=%s | %s", oid, exc)
+        _safe_audit(customer_id, oid, "refund_processed", {
+            "refund_id":  refund.get("refund_id"),
+            "amount_inr": refund.get("amount_inr"),
+            "method":     refund.get("method"),
+            "escalated":  False,
+        })
         return {"refund": refund}, "success", False
     except RefundThresholdError:
         case = await _crm.create_case(
@@ -718,15 +939,12 @@ async def _handle_process_refund(args, customer_id, tracer):
             trace_id=tracer.trace_id,
             priority="high",
         )
-        try:
-            _audit.append(customer_id, oid, "refund_processed", {
-                "amount_inr": amount_inr,
-                "method":     method,
-                "escalated":  True,
-                "case_id":    case["case_id"],
-            })
-        except Exception as exc:
-            logger.warning("Audit write failed | action=refund_escalated | order=%s | %s", oid, exc)
+        _safe_audit(customer_id, oid, "refund_processed", {
+            "amount_inr": amount_inr,
+            "method":     method,
+            "escalated":  True,
+            "case_id":    case["case_id"],
+        })
         return {"case_id": case["case_id"], "escalated": True}, "success", True
 
 async def _handle_update_address(args, customer_id, tracer):
@@ -734,13 +952,10 @@ async def _handle_update_address(args, customer_id, tracer):
     await _fetch_owned_order(oid, customer_id)
     result = await _oms.update_shipping_address(oid, customer_id, args["address_label"])
     if not result.get("already_current"):
-        try:
-            _audit.append(customer_id, oid, "address_updated", {
-                "address_label": args["address_label"],
-                "new_address":   result.get("new_address"),
-            })
-        except Exception as exc:
-            logger.warning("Audit write failed | action=address_updated | order=%s | %s", oid, exc)
+        _safe_audit(customer_id, oid, "address_updated", {
+            "address_label": args["address_label"],
+            "new_address":   result.get("new_address"),
+        })
     return result, "success", False
 
 async def _handle_update_address_raw(args, customer_id, tracer):
@@ -753,18 +968,19 @@ async def _handle_update_address_raw(args, customer_id, tracer):
         state=args["state"],
         pincode=args["pincode"],
     )
-    try:
-        _audit.append(customer_id, oid, "address_updated", {
-            "address_label": None,
-            "new_address":   result.get("new_address"),
-        })
-    except Exception as exc:
-        logger.warning("Audit write failed | action=address_updated_raw | order=%s | %s", oid, exc)
+    _safe_audit(customer_id, oid, "address_updated", {
+        "address_label": None,
+        "new_address":   result.get("new_address"),
+    })
     return result, "success", False
 
 async def _handle_create_crm_case(args, customer_id, tracer):
     oid      = _clean_order_id(args["order_id"])
     amt      = args.get("amount_inr")
+    # Verify the session customer owns the referenced order before filing a case
+    # against it — every other order-touching handler enforces this; create a
+    # case must not be an exception (prevents attaching arbitrary order IDs).
+    await _fetch_owned_order(oid, customer_id)
     # Bug 6: honour priority passed by LLM (defaults to medium)
     priority = args.get("priority", "medium")
     case = await _crm.create_case(
@@ -783,13 +999,10 @@ async def _handle_escalate(args, customer_id, tracer):
         amount_inr=float(amt) if amt is not None else None,
         trace_id=tracer.trace_id, priority="high",
     )
-    try:
-        _audit.append(customer_id, oid, "escalation_created", {
-            "case_id": case["case_id"],
-            "reason":  args["reason"],
-        })
-    except Exception as exc:
-        logger.warning("Audit write failed | action=escalation_created | order=%s | %s", oid, exc)
+    _safe_audit(customer_id, oid, "escalation_created", {
+        "case_id": case["case_id"],
+        "reason":  args["reason"],
+    })
     return {"case_id": case["case_id"], "escalated": True}, "success", True
 
 async def _handle_list_cases(args, customer_id, tracer):
@@ -801,10 +1014,18 @@ async def _handle_search_kb(args, customer_id, tracer):
     return {"articles": articles}, "success", False
 
 async def _handle_request_confirmation(args, customer_id, tracer):
+    # Only allow a known mutating tool to be staged for later "yes" dispatch.
+    # This stops a malformed/injected plan from parking an arbitrary action that
+    # confirmation_check_node would later execute on a bare affirmative.
+    action = str(args.get("action", ""))
+    if action not in _MUTATING_TOOLS:
+        return {
+            "error": f"Action '{action}' is not eligible for confirmation."
+        }, "error", False
     return {
         "confirmation_message": args.get("confirmation_message", "Can you confirm?"),
         "pending_action": {
-            "tool":   args.get("action", ""),
+            "tool":   action,
             "params": args.get("action_params", {}),
         },
     }, "success", False
@@ -905,6 +1126,13 @@ def _route_confirmation_check(state: AtlasCareState) -> str:
 async def pre_guardrail_node(state: AtlasCareState, config) -> dict:
     tracer: Tracer = config["configurable"]["tracer"]
     raw = _last_user_message(state["messages"])
+
+    # Code-enforced safety backstop — takes precedence over everything. A
+    # high-severity fraud/safety/legal report is escalated deterministically and
+    # never handled by an autonomous tool action (no refund/cancel possible).
+    safety_reason = detect_safety_escalation(raw)
+    if safety_reason:
+        return await _force_safety_escalation(state, tracer, raw, safety_reason)
 
     verdict = _guardrails.pre_check(raw, state["customer_id"], tracer)
     if verdict.blocked:
@@ -1057,6 +1285,17 @@ async def responder_node(state: AtlasCareState, config) -> dict:
     """Generate the customer-facing response."""
     tracer: Tracer = config["configurable"]["tracer"]
 
+    # Standalone greeting → deterministic, personalised, professional open.
+    # Avoids the generic LLM-improvised reply and addresses the customer by name.
+    if not state.get("execution_summary") and _is_pure_greeting(_last_user_message(state["messages"])):
+        name = await _customer_first_name(state["customer_id"])
+        greeting = (
+            f"Hi there, {name}! How can I assist you today?"
+            if name else
+            "Hi there! How can I assist you today?"
+        )
+        return {"final_response": greeting}
+
     # Escalation: deterministic response — no LLM call needed
     if any(s.get("escalated") for s in state["execution_summary"]):
         case_id = next(
@@ -1109,7 +1348,7 @@ async def responder_node(state: AtlasCareState, config) -> dict:
             tracer.record_tool_call("responder", "respond", "success",
                                     {"latency_ms": int((time.monotonic() - t0) * 1000)})
             text = (completion.choices[0].message.content or "").strip()
-            return {"final_response": text or ""}
+            return {"final_response": _sanitize_response(text) or ""}
         # No prior tool results either — fall through to let the agent's direct text
         # be handled by the normal responder path below (execution_summary is empty
         # so tool_context will be blank, and the model generates a greeting/general reply).
@@ -1162,7 +1401,8 @@ async def responder_node(state: AtlasCareState, config) -> dict:
 
     text = (completion.choices[0].message.content or "").strip()
     return {
-        "final_response": text or "Your request has been processed. Is there anything else I can help with?",
+        "final_response": _sanitize_response(text)
+        or "Your request has been processed. Is there anything else I can help with?",
     }
 
 
@@ -1196,6 +1436,11 @@ async def evaluator_node(state: AtlasCareState, config) -> dict:
     tools_called = {s["tool"] for s in state["execution_summary"]}
     if "request_confirmation" in tools_called:
         return {"eval_approved": True}   # confirmation prompt is self-verifying
+    # A single-order lookup just presents fetched data — bypass the quality LLM
+    # unless the customer also asked for an action we should verify. (list_orders
+    # / filter queries fall through to the _is_complex check below and ARE judged.)
+    if tools_called == {"get_order"} and not _has_mutation_intent(user_msg):
+        return {"eval_approved": True}
     if tools_called.issubset(_READ_ONLY_TOOLS) and not _is_complex(user_msg):
         return {"eval_approved": True}
 
@@ -1225,7 +1470,11 @@ async def evaluator_node(state: AtlasCareState, config) -> dict:
             "Reject if: the response says 'refund has been initiated', 'refund is being processed', "
             "or similar, but the tool results do NOT include a successful process_refund or "
             "cancel_item call. A get_order or list_orders result showing a pre-cancelled order "
-            "does NOT mean a refund was initiated now."
+            "does NOT mean a refund was initiated now.\n"
+            # F-12: security escalation should not mention unrelated orders
+            "Reject if: the customer's request was a general account-security or fraud concern "
+            "(no specific order ID mentioned) AND the response mentions a specific order ID that "
+            "was not in the customer's original message."
         )},
         {"role": "user", "content": (
             f"Customer request: {user_msg}\n\n"
@@ -1279,6 +1528,11 @@ def _route_tool_executor(state: AtlasCareState) -> str:
         return "post_guardrail"
     # A mutating tool was already attempted — report the result, don't retry.
     if any(s["tool"] in _MUTATING_TOOLS for s in state.get("execution_summary", [])):
+        return "post_guardrail"
+    # Only loop back to let the agent chain a follow-up mutation (e.g. get_order
+    # then cancel_item). A pure lookup is already answered by the read tool, so
+    # skip the redundant planning round-trip and go straight to the responder.
+    if not _has_mutation_intent(_last_user_message(state.get("messages", []))):
         return "post_guardrail"
     return "tool_agent"
 

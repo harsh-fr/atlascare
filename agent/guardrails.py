@@ -36,19 +36,155 @@ logger = logging.getLogger(__name__)
 # Policy constants
 # ---------------------------------------------------------------------------
 
-# Rs.25,000 auto-refund threshold — sourced from env with safe default.
-# NEVER change the default without a compliance review.
-AUTO_REFUND_LIMIT_INR: float = float(
-    os.getenv("AUTO_REFUND_LIMIT_INR", "25000.0")
-)
+# Rs.25,000 auto-refund threshold — single source of truth.
+def _resolve_auto_refund_limit() -> float:
+    """Resolve the auto-refund threshold so every enforcement layer agrees.
+
+    Precedence (mirrors PaymentTool._enforce_threshold):
+      1. ``auto_refund_limit_inr`` in payment_config.json — the data the
+         operator/evaluator supplies. This is what lets the threshold track
+         the deployed config WITHOUT a code change, so a swapped-in data
+         folder is honoured by the guardrail and the agent prompt alike.
+      2. ``AUTO_REFUND_LIMIT_INR`` env var — fallback when config is missing.
+      3. Rs.25,000 hardcoded safe default.
+
+    NEVER change the default without a compliance review.
+    """
+    try:
+        from repositories.payment_repository import PaymentRepository
+
+        limit = PaymentRepository().get_config().get("auto_refund_limit_inr")
+        if limit is not None:
+            return float(limit)
+    except Exception as exc:  # pragma: no cover - defensive
+        logger.warning("auto_refund_limit_inr unavailable from payment_config: %s", exc)
+    return float(os.getenv("AUTO_REFUND_LIMIT_INR", "25000.0"))
+
+
+AUTO_REFUND_LIMIT_INR: float = _resolve_auto_refund_limit()
 
 # Regex patterns for amount extraction from free text
 # Matches: ₹42,000 | Rs.42000 | Rs 42,000 | INR 42000
 _AMOUNT_PATTERNS = [
-    re.compile(r"[₹Rs\.]+\s*([\d,]+(?:\.\d{1,2})?)", re.IGNORECASE),
+    # ₹42,000 | Rs.42000 | Rs 42,000 — proper alternation (the old
+    # character-class form [₹Rs\.]+ matched stray 'R'/'s'/'.' and mis-extracted).
+    # \brs avoids matching the "rs" inside words like "hours".
+    re.compile(r"(?:₹|\brs\.?)\s*([\d,]+(?:\.\d{1,2})?)", re.IGNORECASE),
     re.compile(r"INR\s*([\d,]+(?:\.\d{1,2})?)",       re.IGNORECASE),
     re.compile(r"([\d,]+(?:\.\d{1,2})?)\s*(?:rupees?|inr)", re.IGNORECASE),
 ]
+
+# F-08: worded-amount lookup table for common Indian denominations
+# Maps normalised word tokens → float multiplier
+_WORD_AMOUNT_UNITS: dict[str, float] = {
+    "hundred": 100.0,
+    "thousand": 1_000.0,
+    "lakh": 100_000.0,
+    "lac": 100_000.0,
+    "crore": 10_000_000.0,
+}
+_WORD_DIGITS: dict[str, float] = {
+    "zero": 0, "one": 1, "two": 2, "three": 3, "four": 4,
+    "five": 5, "six": 6, "seven": 7, "eight": 8, "nine": 9,
+    "ten": 10, "eleven": 11, "twelve": 12, "thirteen": 13,
+    "fourteen": 14, "fifteen": 15, "sixteen": 16, "seventeen": 17,
+    "eighteen": 18, "nineteen": 19, "twenty": 20, "thirty": 30,
+    "forty": 40, "fifty": 50, "sixty": 60, "seventy": 70,
+    "eighty": 80, "ninety": 90,
+}
+
+def _parse_worded_amount(text: str) -> list[float]:
+    """
+    Extract monetary amounts expressed in words, e.g.
+    'twenty-five thousand rupees'  → [25000.0]
+    'one lakh'                     → [100000.0]
+    Returns a list of floats (may be empty).
+    Only fires when a currency word is present nearby.
+    """
+    lower = text.lower()
+    # Only attempt if a currency indicator is nearby
+    if not re.search(r'\b(rupees?|inr|rs\.?|₹)\b', lower):
+        return []
+
+    amounts: list[float] = []
+    # Tokenise: keep hyphens so "twenty-five" works
+    tokens = re.findall(r'[a-z]+', lower)
+    i = 0
+    while i < len(tokens):
+        if tokens[i] in _WORD_DIGITS or tokens[i] in _WORD_AMOUNT_UNITS:
+            total = 0.0
+            current = 0.0
+            j = i
+            while j < len(tokens):
+                t = tokens[j]
+                if t in _WORD_DIGITS:
+                    current += _WORD_DIGITS[t]
+                elif t in _WORD_AMOUNT_UNITS:
+                    if current == 0:
+                        current = 1
+                    current *= _WORD_AMOUNT_UNITS[t]
+                    total += current
+                    current = 0.0
+                elif t in ("and", "rupees", "rupee", "inr", "rs"):
+                    j += 1
+                    continue
+                else:
+                    break
+                j += 1
+            if current > 0:
+                total += current
+            if total > 0:
+                amounts.append(total)
+            i = j
+        else:
+            i += 1
+    return amounts
+
+
+# ---------------------------------------------------------------------------
+# High-severity safety / fraud / legal signals (code-enforced escalation)
+# ---------------------------------------------------------------------------
+# These must be handled by a specialist and must NEVER be resolved by an
+# autonomous refund/cancel. This is a CODE backstop for the escalation policy
+# that otherwise lives only in the agent prompt (and is bypassable by prompt
+# injection or model error). Intentionally conservative: when in doubt, escalate.
+_SAFETY_ESCALATION_PATTERNS: list[tuple[str, re.Pattern]] = [
+    ("fraud_or_unauthorised", re.compile(
+        r"\b(fraud(?:ulent)?|unauthor(?:ised|ized)"
+        r"|did(?:n['’]?t| not)\s+(?:place|order|authori[sz]e)"
+        r"|never\s+(?:placed|ordered|authori[sz]ed)|not\s+my\s+order"
+        r"|without\s+my\s+(?:knowledge|consent|permission)"
+        r"|account\s+(?:hacked|compromised|breached)|identity\s+theft"
+        r"|someone\s+(?:else\s+)?(?:used|accessed|placed|hacked)"
+        r"|(?:card|account)\s+(?:was\s+)?stolen)\b",
+        re.IGNORECASE)),
+    ("safety_or_injury", re.compile(
+        r"\b(injur(?:y|ed|ies)|wounded|bleeding|hospitali[sz]ed"
+        r"|electric\s+shock|electrocut(?:ed|ion)?|caught\s+fire"
+        r"|burst\s+into\s+flames|explod(?:e|ed|ing)|burn(?:ed|t|ing)"
+        r"|hazard(?:ous)?|dangerous|unsafe)\b",
+        re.IGNORECASE)),
+    ("legal_or_regulatory", re.compile(
+        r"\b(lawsuit|sue\s+(?:you|the\s+company|them)|legal\s+action"
+        r"|my\s+(?:lawyer|attorney)|consumer\s+(?:court|forum|protection)"
+        r"|file\s+(?:an?\s+)?(?:fir|police\s+complaint|complaint\s+with\s+(?:the\s+)?police)"
+        r"|report(?:ing)?\s+to\s+(?:the\s+)?(?:authorities|police)|ombudsman)\b",
+        re.IGNORECASE)),
+]
+
+
+def detect_safety_escalation(message: str) -> str | None:
+    """
+    Return a category label if the message contains a high-severity safety,
+    fraud, or legal signal that must be escalated to a specialist and never
+    resolved autonomously. Returns None otherwise. Pure function, no side effects.
+    """
+    if not message:
+        return None
+    for label, pattern in _SAFETY_ESCALATION_PATTERNS:
+        if pattern.search(message):
+            return label
+    return None
 
 
 # ---------------------------------------------------------------------------
@@ -319,7 +455,7 @@ class Guardrails:
 # ---------------------------------------------------------------------------
 def _extract_amounts(text: str) -> list[float]:
     """
-    Extract all monetary amounts from free text.
+    Extract all monetary amounts from free text, including worded forms.
     Returns a list of floats (may be empty).
     """
     amounts: list[float] = []
@@ -330,4 +466,6 @@ def _extract_amounts(text: str) -> list[float]:
                 amounts.append(float(raw))
             except ValueError:
                 pass
+    # F-08: also catch worded amounts like "twenty-five thousand rupees"
+    amounts.extend(_parse_worded_amount(text))
     return amounts

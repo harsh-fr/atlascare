@@ -20,7 +20,7 @@
           "name": "Python Crash Course Book",
           "quantity": 1,
           "unit_price": 750.0,
-          "status": "cancelled"
+          "status": "active"
         },
         {
           "line_id": 2,
@@ -28,7 +28,7 @@
           "name": "USB-C 7-in-1 Hub",
           "quantity": 1,
           "unit_price": 1500.0,
-          "status": "cancelled"
+          "status": "active"
         },
         {
           "line_id": 3,
@@ -39,7 +39,7 @@
           "status": "cancelled"
         }
       ],
-      "total_amount": 0.0,
+      "total_amount": 2250.0,
       "payment_method": "UPI"
     },
     {
@@ -52,7 +52,7 @@
       "shipping_address": {
         "line1": "7 Park Street",
         "city": "Bengaluru",
-        "state": "",
+        "state": "Karnataka",
         "pincode": "560001"
       },
       "items": [

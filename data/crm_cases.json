@@ -412,6 +412,50 @@
       "amount_inr": null,
       "trace_id": "trc-107a5b55d8db",
       "created_at": "2026-05-29T04:52:59.822379+00:00"
+    },
+    {
+      "case_id": "CASE-6C2CFE",
+      "customer_id": "CUST-001",
+      "order_id": "ORD-10008",
+      "status": "open",
+      "priority": "high",
+      "description": "[ESCALATION CASE — AtlasCare]\nCustomer  : CUST-001\nOrder     : ORD-10008\nPriority  : HIGH\nAmount    : N/A\nReason    : Damaged/Defective Item\nAction    : Requires specialist review. Please contact the customer to resolve their query.\nTrace ID  : trc-eea09dbd95ec\nCreated   : 2026-05-29 07:09 UTC",
+      "amount_inr": null,
+      "trace_id": "trc-eea09dbd95ec",
+      "created_at": "2026-05-29T07:09:29.657260+00:00"
+    },
+    {
+      "case_id": "CASE-2C2E25",
+      "customer_id": "CUST-001",
+      "order_id": "N/A",
+      "status": "open",
+      "priority": "high",
+      "description": "[ESCALATION CASE — AtlasCare]\nCustomer  : CUST-001\nOrder     : N/A\nPriority  : HIGH\nAmount    : N/A\nReason    : Auto-escalated by safety guardrail [fraud_or_unauthorised]. Customer message requires specialist handling; autonomous action withheld.\nAction    : Requires specialist review. Please contact the customer to resolve their query.\nTrace ID  : trc-eb521de7f1c0\nCreated   : 2026-05-29 07:09 UTC",
+      "amount_inr": null,
+      "trace_id": "trc-eb521de7f1c0",
+      "created_at": "2026-05-29T07:09:48.239189+00:00"
+    },
+    {
+      "case_id": "CASE-032BA1",
+      "customer_id": "CUST-001",
+      "order_id": "N/A",
+      "status": "open",
+      "priority": "high",
+      "description": "[ESCALATION CASE — AtlasCare]\nCustomer  : CUST-001\nOrder     : N/A\nPriority  : HIGH\nAmount    : N/A\nReason    : Auto-escalated by safety guardrail [fraud_or_unauthorised]. Customer message requires specialist handling; autonomous action withheld.\nAction    : Requires specialist review. Please contact the customer to resolve their query.\nTrace ID  : trc-d451eaa03e2c\nCreated   : 2026-05-29 07:10 UTC",
+      "amount_inr": null,
+      "trace_id": "trc-d451eaa03e2c",
+      "created_at": "2026-05-29T07:10:42.213296+00:00"
+    },
+    {
+      "case_id": "CASE-0F820D",
+      "customer_id": "CUST-001",
+      "order_id": "ORD-10008",
+      "status": "open",
+      "priority": "high",
+      "description": "[ESCALATION CASE — AtlasCare]\nCustomer  : CUST-001\nOrder     : ORD-10008\nPriority  : HIGH\nAmount    : N/A\nReason    : Auto-escalated by safety guardrail [legal_or_regulatory]. Customer message requires specialist handling; autonomous action withheld.\nAction    : Requires specialist review. Please contact the customer to resolve their query.\nTrace ID  : trc-a161d0d80624\nCreated   : 2026-05-29 07:11 UTC",
+      "amount_inr": null,
+      "trace_id": "trc-a161d0d80624",
+      "created_at": "2026-05-29T07:11:51.786666+00:00"
     }
   ]
 }
