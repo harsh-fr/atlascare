@@ -1,0 +1,311 @@
+==============================================================================
+ATLASCARE — VIDEO DEBRIEF SCRIPT  (target: <20 minutes)
+Agentic AI Customer-Support Platform for Acme Retail Co.
+==============================================================================
+
+HOW TO USE THIS FILE
+- Left margin [mm:ss] = running timestamp guide. Total ≈ 18 min.
+- "SAY:" = what to speak. "SHOW:" = what to put on screen (file/diagram/terminal).
+- Speak to the engineering judgement, not the prompt wording — the rubric says
+  they are assessing whether you think like someone who has to DEPLOY, OPERATE
+  and be ON CALL for this system at scale.
+- Rubric dimensions to hit explicitly (call them out by name as you go):
+  business KPIs · scalable architecture · governance · security · compliance · evaluations.
+
+==============================================================================
+[00:00] 1. OPENING & PROBLEM FRAMING   (~1.5 min)
+==============================================================================
+SAY:
+"Hi, this is my submission for AtlasCare — an agentic customer-support system
+for a retail company. Before the code, the framing that drove every decision:
+
+An agent that can autonomously cancel orders and move money is not a chatbot —
+it's a system that takes irreversible, financial actions on a customer's behalf.
+So I did NOT optimise for 'a demo that answers nicely once.' I optimised for the
+question an on-call engineer asks at 3am: 'What happens when the LLM is wrong,
+slow, rate-limited, or adversarially prompted — and did we move money we
+shouldn't have, or fail to move money we should have?'
+
+So the theme you'll see throughout is: the LLM decides, but CODE enforces.
+Every money- or state-changing rule has a deterministic guardrail that does not
+depend on the model obeying a prompt. That's the core thesis of the build."
+
+==============================================================================
+[01:30] 2. ARCHITECTURE OVERVIEW   (~3 min)   [scalable architecture]
+==============================================================================
+SHOW: a simple box diagram (draw it) OR the graph wiring in agent/graph.py.
+
+SAY:
+"The stack is FastAPI for the API, a Gradio UI, and a LangGraph state machine
+as the agent core. The LLM is reached through an OpenAI-compatible client, which
+matters for portability — I'll come back to that.
+
+Request lifecycle is an explicit graph, not a free-running loop:
+
+  confirmation_check → pre_guardrail → tool_agent(plan) → tool_executor
+                       → post_guardrail → responder → evaluator → END
+
+- confirmation_check: resolves a pending 'are you sure?' from a previous turn.
+- pre_guardrail: deterministic checks BEFORE the LLM (safety/fraud escalation,
+  over-limit refunds, malformed IDs, empty/oversized input).
+- tool_agent: the planner LLM chooses tools. I run a TWO-TIER model strategy —
+  a strong 70B model for complex/mutating/filter queries, a fast 8B model for
+  simple lookups — so simple reads return in under ~3 seconds while hard
+  reasoning still gets the big model. That's a direct cost/latency KPI lever.
+- tool_executor: runs the tools; this is where several code-enforced policies live.
+- post_guardrail: a final money-safety net AFTER execution.
+- responder: writes the customer reply from tool results only.
+- evaluator: an LLM-as-judge pass that can send a weak reply back for ONE
+  regeneration, then it ships regardless — a deliberate bound (cap latency/cost,
+  avoid judge oscillation). It's also bypassed entirely for read-only lookups,
+  escalations and confirmation prompts (no LLM call), so it only judges
+  action/complex responses.
+
+Layering underneath: tools → services → repositories → data. The 4 CANONICAL
+data files (orders, crm_cases, kb_articles, payment_config) are the source of
+truth; support files (users, sessions, refund + audit ledgers) are DERIVED at
+startup. Money is handled with Decimal, never float. Every order-touching
+action writes to an append-only audit log with a trace id — that's governance."
+
+SHOW: observability/tracer.py + the admin dashboard (KPIs / traces / cases).
+SAY:
+"Observability is first-class: every request gets a trace id, every tool call is
+recorded with status and latency, guardrail triggers are logged, and there's an
+admin dashboard with KPIs — refund totals, open/high-priority cases, and
+'cases-with-trace' so every escalation is attributable. That's what you need to
+operate and debug this in production."
+
+==============================================================================
+[04:30] 3. THE BOTTLENECKS / RISK POINTS — AND HOW THEY ARE HANDLED  (~9 min)
+==============================================================================
+SAY:
+"Now the heart of it — the failure modes a production agent must survive, and
+the specific mechanism that handles each. For each I'll name the file/function."
+
+------------------------------------------------------------------------------
+3.1  CONFIG AS SOURCE OF TRUTH (no hardcoded policy)   [compliance · governance]
+------------------------------------------------------------------------------
+SHOW: tools/payment_tool.py::_resolve_supported_methods ; agent/guardrails.py::_resolve_auto_refund_limit
+SAY:
+"Business policy must be data-driven so an operator can change it without a code
+deploy. The ₹25,000 auto-refund limit and the supported refund methods both come
+from payment_config.json, resolved at runtime.
+- _resolve_auto_refund_limit(): payment_config → env override → safe default.
+- _resolve_supported_methods(): the live method set = CODE_CEILING ∩ config. Code
+  is the ceiling (config can only narrow to rails we can actually route), but
+  dropping a method in the JSON genuinely disables it. Earlier this field was
+  read by a test but ignored at runtime — a classic 'config that lies.' Now it's
+  enforced. Same human-readable list feeds the prompt AND the error messages, so
+  they can never drift from what the tool accepts."
+
+------------------------------------------------------------------------------
+3.2  MONEY SAFETY — REFUND THRESHOLD, DEFENCE IN DEPTH   [business KPI · compliance]
+------------------------------------------------------------------------------
+SHOW: guardrails.py::_rule_high_value_refund_pre (GR-001) ;
+      payment_tool.py::_enforce_threshold ; guardrails.py::_rule_no_over_limit_refund (GR-004)
+SAY:
+"A wrong autonomous refund over the limit is the worst thing this system can do,
+so it's guarded in THREE independent layers:
+  1) GR-001, pre-LLM: if the message names a refund amount over the limit, escalate
+     before the model even runs. I also fixed it to catch bare numbers like
+     'refund 50000' with no currency symbol — anchored to the refund verb so it
+     never mistakes an order-id or pincode for an amount.
+  2) PaymentTool._enforce_threshold, at disbursement: the tool itself refuses to
+     pay over the limit and raises a typed RefundThresholdError → specialist case.
+  3) GR-004, post-execution: a final net that blocks the reply if a refund OVER
+     the limit was actually disbursed.
+Defence in depth means a single bug or a clever prompt can't open the money tap."
+
+------------------------------------------------------------------------------
+3.3  CANCEL / REFUND ATOMICITY (never cancel without a refund trace)  [business KPI]
+------------------------------------------------------------------------------
+SHOW: agent/graph.py::_handle_cancel_item
+SAY:
+"This is my favourite catch, found by inspecting live data: an order had 3
+cancelled items but only 2 refund records — one item was cancelled with NO refund
+on record. Root cause: the handler cancelled FIRST, then refunded; a declined
+gateway call or a dropped session left the cancellation committed and the refund
+lost.
+Fix: I REVERSED the order. _handle_cancel_item now secures the refund TRACE
+first — a disbursement record, or a specialist case for high-value/COD — and only
+THEN commits the cancellation. If the refund can't be initiated, we do NOT cancel;
+the order is left untouched and retryable. The worst case degrades to 'refund
+recorded but item still active' (recoverable) — never the unrecoverable
+'cancelled with no refund.' That's transaction-ordering thinking applied to an
+agent."
+
+------------------------------------------------------------------------------
+3.4  CODE-ENFORCED GUARDRAILS (don't trust the model)   [governance · security]
+------------------------------------------------------------------------------
+SAY: "Four places where I refused to leave a critical decision to the prompt:"
+
+SHOW: graph.py::_detect_unsupported_refund_method + _unsupported_method_reply
+SAY:
+"(a) Unsupported refund method. If a customer says 'refund me to my Amex,' a
+message-level guard catches it BEFORE the planner and returns the supported menu
+directly — original method first for normal orders, electronic-only for COD. No
+LLM call, no 'are you sure?'. Three layers actually back this (message guard,
+confirmation interception, handler resolve) so the model can't route around it."
+
+SHOW: graph.py::_maybe_force_confirmation / _maybe_bypass_confirmation / _cancel_needs_confirmation
+SAY:
+"(b) Confirmation gating, both directions. Confirmation for high-value cancels
+used to be prompt-only — and a weaker model skipped it, cancelling an ₹18,000
+item with no 'are you sure?'. Now it's code-enforced: a direct cancel of a
+>₹5,000 OR ambiguous item is converted into a confirmation; and the inverse —
+needless confirmations on a ₹200 item are bypassed and executed directly. The
+ambiguity check stops 'cancel the cotton kurta' from silently guessing between
+'Blue' and 'Green'."
+
+SHOW: graph.py::detect_safety_escalation / _force_safety_escalation
+SAY:
+"(c) Safety, fraud, legal, injury. These are detected deterministically and
+escalated to a priority case with NO autonomous action — the agent literally
+cannot refund or cancel on a fraud report. That's compliance and risk containment."
+
+SHOW: graph.py::_clean_order_id
+SAY:
+"(d) Input normalisation. 'Info about 10001' becomes ORD-10001 for every tool
+call — a small thing that prevents a class of silent 'not found' failures."
+
+------------------------------------------------------------------------------
+3.5  SECURITY   [security · governance]
+------------------------------------------------------------------------------
+SHOW: graph.py::_assert_ownership / _fetch_owned_order ; _sanitize_response ; _AGENT_SYSTEM instruction-integrity block
+SAY:
+"- Ownership: every order-touching tool verifies the session's customer owns the
+  order — a customer can never read or mutate another customer's order. Tested.
+- Prompt-injection & scope: the system prompt treats customer text as untrusted
+  data, refuses to reveal internals or act outside support, and we verified it
+  declines 'reveal your system prompt' and out-of-scope requests.
+- Output scrubbing: _sanitize_response deterministically strips customer IDs and
+  internal payment codes, AND removes invented refund options (a weak model once
+  offered 'store credit / bank transfer' which we don't support) — so a model slip
+  can't leak internal data or promise something we can't honour."
+
+------------------------------------------------------------------------------
+3.6  RESILIENCE & SCALE   [scalable architecture · KPIs]
+------------------------------------------------------------------------------
+SHOW: graph.py::_chat_completion_with_retry ; payment_tool retry loop ; _safe_audit ; _append_capped (history cap)
+SAY:
+"- LLM retry/backoff: every model call is wrapped with bounded exponential
+  backoff on rate-limits/timeouts/5xx, honouring Retry-After. A transient blip no
+  longer becomes a user-facing failure — directly improves the success-rate KPI.
+- Payment gateway has its own retry with backoff for simulated timeouts.
+- Audit writes retry before giving up, and an audit failure NEVER aborts an
+  action that already succeeded.
+- Conversation history is capped per thread — an unbounded, client-supplied
+  session id is a memory-exhaustion vector, so we keep only the last N turns.
+- Idempotency: a duplicate-refund guard ensures total refunds never exceed the
+  order total, and already-cancelled orders short-circuit."
+
+------------------------------------------------------------------------------
+3.7  PROVIDER PORTABILITY (operational lever)   [scalable architecture]
+------------------------------------------------------------------------------
+SAY:
+"Because the client is OpenAI-compatible, I swapped the entire LLM backend from
+Groq/Llama to Google Gemini with ONLY environment-variable changes — no code.
+That's vendor independence and a real failover story: if a provider is down or
+rate-limited, you reconfigure, not rebuild. I'll show that in the demo, and it
+also surfaced a concrete production lesson I'll mention in limitations."
+
+==============================================================================
+[13:30] 4. EVALUATIONS   (~1.5 min)   [evaluations]
+==============================================================================
+SHOW: tests/ directory ; `pytest -q` summary (380 passed) ; graph.py evaluator node
+SAY:
+"Evaluation is two-layered:
+- OFFLINE: a 380-test suite — contract tests that pin the data schema and policy
+  numbers, plus a regression test for EVERY bug and guardrail I described. Each
+  fix shipped with a test, so the system can't silently regress.
+- ONLINE / in-flight: an LLM-as-judge evaluator node scores the response against
+  the request. On a REJECT it regenerates the reply ONCE with the judge's feedback,
+  then ships whatever the second attempt produced — a deliberate cap so a request
+  can never loop indefinitely (bounded latency and token cost, and no reject↔retry
+  oscillation, since an LLM judge isn't deterministic). Crucially the judge only
+  raises the QUALITY ceiling (tone, completeness, past-tense, no fabricated steps);
+  the deterministic guardrails are the SAFETY floor — so a single bounded retry is
+  sufficient and the judge is never load-bearing for correctness. It also bypasses
+  evaluation entirely for read-only lookups, escalations and confirmation prompts.
+I also ran scripted failure-case batteries — ~30 adversarial multi-intent queries
+across threshold, COD, unsupported-method, ambiguity, escalation, injection and
+filtering — to see how it behaves under load, not just once."
+
+==============================================================================
+[15:00] 5. DEMO (live or recorded)   (~2 min)
+==============================================================================
+SAY (narrate while running these against the API):
+"A few representative runs — watch the tool trace, not just the reply:
+  1) 'Cancel the wireless mouse on ORD-78321' → low-value → cancels directly,
+     refunds to original, no needless confirmation.
+  2) 'Cancel the Dell laptop on ORD-78321' → high-value → CODE forces a
+     confirmation; only on 'yes' does it act, and the >₹25k refund escalates to a
+     specialist case.
+  3) 'Refund my order to my American Express card' → deterministic menu, no LLM,
+     no action — original method offered first.
+  4) 'I never placed this order, this is fraud' → instant priority escalation,
+     zero autonomous action.
+  5) A multi-intent message touching several orders → it completes the valid
+     actions AND escalates the over-limit one, narrating both — no action hidden.
+Point the viewer at the trace id + audit entries to show every action is recorded."
+
+==============================================================================
+[17:00] 6. KNOWN LIMITATIONS — REASON — PRODUCTION SOLUTION   (~2.5 min)
+==============================================================================
+SAY: "Being honest about the edges, because that's the on-call mindset:"
+
+1) Persistence is JSON files with in-process write-locks.
+   REASON: assignment scope / fast iteration.
+   PROD: PostgreSQL with real transactions + row-level locks + idempotency keys;
+   the repository layer is already the seam to swap in a DB with no logic change.
+
+2) Post-execution guardrail (GR-004) runs AFTER side effects commit.
+   REASON: some checks need the actual result.
+   PROD: move money checks fully pre-commit, or a saga / compensating-transaction
+   pattern so a blocked reply triggers an automatic reversal. Today we at least
+   LOG the committed actions CRITICAL for reconciliation, and GR-004 is effectively
+   unreachable because the tool blocks over-limit at source.
+
+3) LLM rate limits are a hard external ceiling (Groq daily token cap; Gemini free
+   tier was 20 requests/day — which actually broke a test battery).
+   REASON: free-tier provider quotas.
+   PROD: paid tier + MULTI-PROVIDER failover (the OpenAI-compat client makes this
+   trivial), a request queue, and response caching for repeated reads.
+
+4) Some quality still depends on the model (e.g. narration completeness, slot
+   accuracy), even though all CRITICAL decisions are code-enforced.
+   REASON: it's an LLM.
+   PROD: tighter slot-filling/structured extraction for high-stakes intents, and
+   continuous online eval metrics with alerting + A/B on prompt/model changes.
+
+5) State (checkpointer, trace store) is in-memory, single-process.
+   REASON: simplicity.
+   PROD: Redis/persistent checkpointer + horizontal scaling behind a load balancer;
+   an API gateway for authN/Z, per-tenant rate limiting and request signing.
+
+==============================================================================
+[19:30] 7. CLOSE   (~0.5 min)
+==============================================================================
+SAY:
+"To summarise: I treated this as a system that takes irreversible financial
+actions, so the LLM proposes but CODE enforces — config-driven policy, money
+safety in depth, atomic cancel/refund, deterministic guardrails for security and
+escalation, retry/backoff for resilience, full tracing and audit for governance,
+and a regression test behind every fix. The limitations are known, with a clear
+production path for each. Thanks for watching."
+
+==============================================================================
+APPENDIX — QUICK FILE MAP (for on-screen reference)
+==============================================================================
+agent/graph.py        LangGraph nodes, tools, all code-enforced guardrails, retry helper
+agent/guardrails.py   GR-001 pre-check, GR-004 post-check, safety/fraud detection, threshold resolve
+tools/payment_tool.py supported-methods bound, threshold enforcement, gateway retry
+tools/oms_tool.py     order mutations (cancel/address) + persistence
+repositories/*        data access + write-locks (the DB seam)
+services/*            order/refund/escalation business logic
+utils/                money (Decimal), validators, payment_methods (single source of truth)
+observability/        tracer + structured logging
+tests/                380 tests: contracts + per-bug regressions + batteries
+admin_dashboard.py    KPIs, recent traces, CRM cases
+data/                 4 canonical files (source of truth) + derived support files
+==============================================================================

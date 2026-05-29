@@ -1,3 +1,4 @@
+import asyncio
 import json
 import logging
 import operator
@@ -9,7 +10,10 @@ from typing_extensions import TypedDict
 
 from langgraph.graph import StateGraph, START, END
 from langgraph.checkpoint.memory import MemorySaver
-from openai import AsyncOpenAI, BadRequestError
+from openai import (
+    AsyncOpenAI, BadRequestError, RateLimitError,
+    APIConnectionError, APITimeoutError, InternalServerError,
+)
 
 from agent.guardrails import AUTO_REFUND_LIMIT_INR, Guardrails, detect_safety_escalation
 from utils.payment_methods import (
@@ -53,6 +57,13 @@ _SUPPORTED_ELECTRONIC_METHODS = [
 _SUPPORTED_METHODS_STR = ", ".join(
     _INTERNAL_METHOD_LABELS.get(m, m) for m in _SUPPORTED_ELECTRONIC_METHODS
 )
+
+# Refund SLA (business days) sourced from payment_config.refund_sla_days so the
+# customer-facing timeline tracks the deployed config rather than a hardcoded range.
+try:
+    _REFUND_SLA_DAYS = int(_payment._config.get("refund_sla_days", 5))
+except Exception:  # pragma: no cover - defensive
+    _REFUND_SLA_DAYS = 5
 
 
 # Cap retained conversation history per thread. The checkpointer (MemorySaver)
@@ -416,6 +427,9 @@ _RESPONSE_SYSTEM = (
     "IN THE SAME ORDER. When the result mentions the customer's original payment method, lead with it as the "
     "simplest option BEFORE listing the other methods — never drop the original-payment-method option. "
     "Ask which they'd like, and do not claim anything was cancelled or refunded.\n"
+    "NEVER invent refund options. Refunds go ONLY to the customer's original payment method or a "
+    f"supported method ({_SUPPORTED_METHODS_STR}). Do NOT offer store credit, gift cards, vouchers, "
+    "cheques, bank transfers, or any option not in that list.\n"
     "When an address update result contains 'already_current: true', tell the customer their order "
     "is already shipping to that address — do not imply an error or that an update was made.\n"
     "Never reveal internal refund limits, autonomous processing thresholds, or any monetary cap "
@@ -438,11 +452,9 @@ _RESPONSE_SYSTEM = (
     "- When a refund IS reported (process_refund or cancel_item was called this turn): "
     "(1) confirm the cancellation, (2) state the refund has been initiated, "
     "(3) calculate the refund amount as the sum of (unit_price × quantity) for all cancelled items, "
-    "(4) state the expected timeline based on payment_method:\n"
-    "    UPI → 3–5 business days\n"
-    "    HDFC_CREDIT / ICICI_DEBIT / any credit or debit card → 5–7 business days\n"
-    "    SBI_NETBANKING / any net banking → 5–7 business days\n"
-    "    COD → not applicable (cash refunds require a different process — ask for preferred method)\n"
+    f"(4) state the expected timeline: refunds to an electronic method complete within "
+    f"{_REFUND_SLA_DAYS} business days (our standard refund SLA). "
+    "For COD this does not apply — cash refunds need a different process, so ask for a preferred method.\n"
     "- Never say 'the total is 0' or imply the refund amount is zero.\n\n"
     "FILTERING INSTRUCTIONS — when list_orders results are present:\n"
     "- Read the customer's original request carefully for ANY filter criteria: month, year, date range, "
@@ -479,6 +491,45 @@ def _get_groq_client() -> AsyncOpenAI:
         _groq_client_key = current_key
     return _groq_client
 
+
+# Bounded exponential backoff for transient LLM failures (rate limits, timeouts,
+# 5xx, connection blips). Previously any such error propagated straight to the
+# user as a generic "I encountered an issue" — every momentary rate-limit spike
+# became a hard failure. Re-raises after exhausting retries so the caller surfaces
+# a graceful message.
+_LLM_MAX_RETRIES        = int(os.getenv("LLM_MAX_RETRIES", "3"))
+_LLM_RETRY_BASE_DELAY_S = float(os.getenv("LLM_RETRY_BASE_DELAY_S", "1.0"))
+_LLM_RETRY_MAX_DELAY_S  = float(os.getenv("LLM_RETRY_MAX_DELAY_S", "10.0"))
+_LLM_TRANSIENT_ERRORS   = (RateLimitError, APIConnectionError, APITimeoutError, InternalServerError)
+
+
+async def _chat_completion_with_retry(**kwargs):
+    """chat.completions.create with retry/backoff on transient LLM errors."""
+    last_exc: Exception | None = None
+    for attempt in range(1, _LLM_MAX_RETRIES + 1):
+        try:
+            return await _get_groq_client().chat.completions.create(**kwargs)
+        except _LLM_TRANSIENT_ERRORS as exc:
+            last_exc = exc
+            if attempt == _LLM_MAX_RETRIES:
+                break
+            delay = min(_LLM_RETRY_BASE_DELAY_S * (2 ** (attempt - 1)), _LLM_RETRY_MAX_DELAY_S)
+            # Honour a provider Retry-After header when present (capped, so a
+            # day-quota error with a 55s hint doesn't stall the request).
+            try:
+                resp = getattr(exc, "response", None)
+                hdr = resp.headers.get("retry-after") if resp is not None else None
+                if hdr:
+                    delay = min(float(hdr), _LLM_RETRY_MAX_DELAY_S)
+            except Exception:
+                pass
+            logger.warning(
+                "LLM transient error (attempt %d/%d): %s — retrying in %.1fs",
+                attempt, _LLM_MAX_RETRIES, type(exc).__name__, delay,
+            )
+            await asyncio.sleep(delay)
+    raise last_exc
+
 def _safe_audit(customer_id: str, order_id: str, action: str, data: dict) -> None:
     """Write an audit record for a completed action.
 
@@ -487,13 +538,21 @@ def _safe_audit(customer_id: str, order_id: str, action: str, data: dict) -> Non
     already succeeded must not be reversed by an audit-write error. Centralises
     the previously-duplicated try/except blocks.
     """
-    try:
-        _audit.append(customer_id, order_id, action, data)
-    except Exception as exc:
-        logger.error(
-            "AUDIT_FAILURE | action=%s | customer=%s | order=%s | error=%s",
-            action, customer_id, order_id, exc,
-        )
+    last_exc: Exception | None = None
+    for attempt in range(1, 4):  # one write + up to two retries before giving up
+        try:
+            _audit.append(customer_id, order_id, action, data)
+            return
+        except Exception as exc:
+            last_exc = exc
+            logger.warning(
+                "Audit write failed (attempt %d/3) | action=%s | order=%s | error=%s",
+                attempt, action, order_id, exc,
+            )
+    logger.error(
+        "AUDIT_FAILURE | action=%s | customer=%s | order=%s | error=%s",
+        action, customer_id, order_id, last_exc,
+    )
 
 
 class OwnershipError(Exception):
@@ -759,16 +818,59 @@ _CUSTOMER_ID_LEAK_RE = re.compile(
     r"\s*(?:\(?\s*customer\s+id\s*[:#-]?\s*)?\bCUST-\d{3}\b\)?", re.IGNORECASE
 )
 
+# Refund options the system never offers. Weaker responder models sometimes invent
+# these ("store credit", "bank transfer", "gift card"…) despite the "use only
+# provided data" rule, so we strip any line that mentions one as a backstop.
+_DENIED_REFUND_OPTIONS = r"store[\s-]?credit|gift[\s-]?cards?|gift[\s-]?vouchers?|vouchers?|cheques?|bank\s+transfers?"
+_DENIED_REFUND_OPTION_RE = re.compile(rf"\b({_DENIED_REFUND_OPTIONS})\b", re.IGNORECASE)
+# Inline form with its leading connector ("…, or store credit", "via bank transfer",
+# "as a gift card") so we can excise a fragment from inside a sentence cleanly.
+_DENIED_REFUND_OPTION_INLINE_RE = re.compile(
+    rf"\s*(?:[,;]\s*)?(?:\b(?:or|and)\b\s+)?(?:as\s+|via\s+|through\s+|to\s+)?(?:an?\s+)?"
+    rf"(?:{_DENIED_REFUND_OPTIONS})",
+    re.IGNORECASE,
+)
+
+
+def _scrub_invented_refund_options(text: str) -> str:
+    """Remove refund options we don't support from a reply. Per line: excise the
+    inline fragment; if nothing meaningful remains on that line (e.g. a bare bullet
+    '* Store credit'), drop the whole line. Falls back to the original text if the
+    result would be empty or somehow still names a denied option (never mangle blindly)."""
+    if not text or not _DENIED_REFUND_OPTION_RE.search(text):
+        return text
+    out_lines = []
+    for ln in text.splitlines():
+        if not _DENIED_REFUND_OPTION_RE.search(ln):
+            out_lines.append(ln)
+            continue
+        stripped = _DENIED_REFUND_OPTION_INLINE_RE.sub("", ln)
+        body = re.sub(r"^[\s*\-•\d.\)]+", "", stripped)  # ignore bullet/number markers
+        if not re.search(r"[A-Za-z]{2,}", body):
+            continue  # the line was essentially just the denied option → drop it
+        out_lines.append(stripped)
+    cleaned = "\n".join(out_lines)
+    cleaned = re.sub(r"[:,]\s*,", lambda m: m.group(0)[0], cleaned)  # ":," -> ":", ",," -> ","
+    cleaned = re.sub(r"\s+([,.;!?])", r"\1", cleaned)
+    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
+    cleaned = re.sub(r"[ \t]{2,}", " ", cleaned).strip()
+    if not cleaned or _DENIED_REFUND_OPTION_RE.search(cleaned):
+        return text
+    logger.warning("Scrubbed unsupported refund option(s) from responder output.")
+    return cleaned
+
 
 def _sanitize_response(text: str) -> str:
-    """Backstop for the 'never reveal internal data' policy: strip customer IDs
-    and replace internal payment-method codes with human-readable names, even if
-    the LLM ignored the prompt instruction to do so."""
+    """Backstop for the 'never reveal internal data / never offer unsupported refund
+    options' policy: strip customer IDs, render internal payment-method codes as
+    human-readable names, and remove any invented refund options — even if the LLM
+    ignored the prompt instructions."""
     if not text:
         return text
     for code, friendly in _INTERNAL_METHOD_LABELS.items():
         text = re.sub(rf"\b{code}\b", friendly, text)
     text = _CUSTOMER_ID_LEAK_RE.sub("", text)
+    text = _scrub_invented_refund_options(text)
     # Tidy whitespace/punctuation left by redaction.
     text = re.sub(r"[ \t]{2,}", " ", text)
     text = re.sub(r"\s+([.,!?])", r"\1", text)
@@ -1562,7 +1664,7 @@ async def tool_agent_node(state: AtlasCareState, config) -> dict:
 
     t0 = time.monotonic()
     try:
-        completion = await _get_groq_client().chat.completions.create(
+        completion = await _chat_completion_with_retry(
             model=model,
             messages=messages,
             tools=TOOLS,
@@ -1576,7 +1678,7 @@ async def tool_agent_node(state: AtlasCareState, config) -> dict:
         # 8B model produced a malformed tool call — retry with the 70B planner
         logger.warning("tool_use_failed from %s, retrying with planner model", model)
         model = os.environ["PLANNER_MODEL"]
-        completion = await _get_groq_client().chat.completions.create(
+        completion = await _chat_completion_with_retry(
             model=model,
             messages=messages,
             tools=TOOLS,
@@ -1600,42 +1702,97 @@ async def tool_agent_node(state: AtlasCareState, config) -> dict:
 
 # Unit-price above which a cancellation genuinely warrants an "are you sure?"
 # confirmation (mirrors the ₹5,000 figure in the agent prompt). At or below this,
-# a concrete single-item cancel is executed directly — no needless confirmation.
+# an unambiguous single-item cancel is executed directly — no needless confirmation.
 _CONFIRMATION_UNIT_PRICE_INR: float = 5000.0
+_CANCELLABLE_STATUSES = {"placed", "processing"}
 
 
-async def _maybe_bypass_confirmation(args: dict, customer_id: str) -> dict | None:
-    """Anti-overcaution guard. The model sometimes wraps a low-value, unambiguous
-    cancellation in request_confirmation, so the bot needlessly asks "are you sure?"
-    for, say, a ₹1,000 item. Confirmation is only warranted for items OVER ₹5,000
-    (or genuinely ambiguous matches). If the staged action is a concrete cancel of a
-    low-value item, return its params so the executor runs cancel_item directly this
-    turn. Returns None (keep the confirmation) when high-value, ambiguous, or unknown.
+def _name_key(name: str) -> tuple:
+    """First two significant words of an item name, lower-cased — used to detect
+    near-duplicate items ('Cotton Kurta Blue' vs 'Cotton Kurta Green')."""
+    return tuple(re.findall(r"[a-z0-9]+", (name or "").lower())[:2])
+
+
+def _has_ambiguous_sibling(order: dict, target: dict) -> bool:
+    """True if another ACTIVE item shares the target's leading name words — i.e. a
+    cancel request naming that item could plausibly mean either one."""
+    key = _name_key(target.get("name", ""))
+    if not key:
+        return False
+    return any(
+        i is not target and i.get("status") == "active" and _name_key(i.get("name", "")) == key
+        for i in order.get("items", [])
+    )
+
+
+def _cancel_needs_confirmation(order: dict, line_id: int):
+    """Should a cancel of this line be gated behind an explicit confirmation?
+      True  -> high-value (> Rs.5,000) OR ambiguous (a near-duplicate active sibling)
+      False -> safe to execute directly (low-value, unambiguous)
+      None  -> can't tell: item missing/already-cancelled, bad price, or the order
+               isn't cancellable (let cancel_item return its proper error instead).
     """
-    if str(args.get("action")) != "cancel_item":
-        return None
-    params  = args.get("action_params") or {}
-    oid_raw = params.get("order_id")
-    if not oid_raw or params.get("line_id") is None:
-        return None  # not concrete enough — let the confirmation/ask path handle it
-    try:
-        line_id = validate_line_id(params.get("line_id"))
-        order   = await _fetch_owned_order(_clean_order_id(str(oid_raw)), customer_id)
-    except Exception:
+    if order.get("status") not in _CANCELLABLE_STATUSES:
         return None
     target = next((i for i in order.get("items", []) if i.get("line_id") == line_id), None)
     if target is None or target.get("status") == "cancelled":
         return None
     try:
-        if float(target.get("unit_price", 0)) > _CONFIRMATION_UNIT_PRICE_INR:
-            return None  # high-value → keep the explicit confirmation
+        high_value = float(target.get("unit_price", 0)) > _CONFIRMATION_UNIT_PRICE_INR
     except (TypeError, ValueError):
         return None
-    logger.info(
-        "Confirmation bypassed (low-value cancel) | order=%s | line=%s | price=%s",
-        order.get("order_id"), line_id, target.get("unit_price"),
-    )
+    return bool(high_value or _has_ambiguous_sibling(order, target))
+
+
+async def _classify_cancel_request(args: dict, customer_id: str):
+    """Resolve (order, line_id, needs_confirmation) for a cancel_item-shaped args dict.
+    Returns (None, None, None) when it can't be resolved (missing/invalid fields, or
+    ownership/lookup failure)."""
+    oid_raw = args.get("order_id")
+    if not oid_raw or args.get("line_id") is None:
+        return None, None, None
+    try:
+        line_id = validate_line_id(args.get("line_id"))
+        order   = await _fetch_owned_order(_clean_order_id(str(oid_raw)), customer_id)
+    except Exception:
+        return None, None, None
+    return order, line_id, _cancel_needs_confirmation(order, line_id)
+
+
+async def _maybe_bypass_confirmation(args: dict, customer_id: str) -> dict | None:
+    """Anti-overcaution: if the model wraps a LOW-value, UNAMBIGUOUS cancel in
+    request_confirmation, return its params so the executor runs cancel_item directly
+    (no needless "are you sure?"). Keeps the confirmation for high-value/ambiguous/unknown."""
+    if str(args.get("action")) != "cancel_item":
+        return None
+    params = args.get("action_params") or {}
+    order, line_id, needs = await _classify_cancel_request(params, customer_id)
+    if order is None or needs is not False:
+        return None
+    logger.info("Confirmation bypassed (low-value, unambiguous cancel) | order=%s | line=%s",
+                order.get("order_id"), line_id)
     return params
+
+
+async def _maybe_force_confirmation(args: dict, customer_id: str) -> dict | None:
+    """Code-enforced confirmation: if the model calls cancel_item DIRECTLY for a
+    high-value (> Rs.5,000) or ambiguous item, convert it into a request_confirmation
+    so the gate never depends on the model obeying the prompt. Returns the
+    request_confirmation args, or None to let the direct cancel proceed."""
+    order, line_id, needs = await _classify_cancel_request(args, customer_id)
+    if order is None or not needs:
+        return None
+    target = next((i for i in order.get("items", []) if i.get("line_id") == line_id), {})
+    name_ = target.get("name", "this item")
+    oid   = order.get("order_id")
+    if _has_ambiguous_sibling(order, target):
+        msg = (f"You have more than one item matching '{name_}' on order {oid}. "
+               f"Shall I go ahead and cancel '{name_}'?")
+    else:
+        msg = (f"Just to confirm — would you like me to cancel '{name_}' from order {oid}? "
+               "It will be refunded to your original payment method.")
+    logger.info("Forcing confirmation for high-value/ambiguous cancel | order=%s | line=%s", oid, line_id)
+    return {"action": "cancel_item", "action_params": args, "confirmation_message": msg}
 
 
 async def tool_executor_node(state: AtlasCareState, config) -> dict:
@@ -1652,12 +1809,19 @@ async def tool_executor_node(state: AtlasCareState, config) -> dict:
         except json.JSONDecodeError:
             args = {}
 
-        # Skip a needless confirmation for a low-value, concrete cancellation:
-        # run the cancel directly so it's recorded (and responded to) as cancel_item.
+        # Confirmation gating, enforced in code (not left to the model):
+        #  - a confirmation staged for a LOW-value, unambiguous cancel is bypassed
+        #    and executed directly (no needless "are you sure?");
+        #  - a DIRECT cancel of a HIGH-value or AMBIGUOUS item is converted into a
+        #    confirmation so the gate can't be skipped by a weak planner.
         if name == "request_confirmation":
             bypass_params = await _maybe_bypass_confirmation(args, customer_id)
             if bypass_params is not None:
                 name, args = "cancel_item", bypass_params
+        elif name == "cancel_item":
+            forced = await _maybe_force_confirmation(args, customer_id)
+            if forced is not None:
+                name, args = "request_confirmation", forced
 
         t0                   = time.monotonic()
         data, status, escalated = await _dispatch_tool(name, args, customer_id, tracer)
@@ -1698,6 +1862,22 @@ async def post_guardrail_node(state: AtlasCareState, config) -> dict:
     tracer: Tracer = config["configurable"]["tracer"]
     verdict = _guardrails.post_check(state["execution_summary"], tracer)
     if verdict.blocked:
+        # A post-check runs AFTER tools have committed, so a block can coincide with
+        # already-persisted mutations. Record exactly what was committed so ops can
+        # reconcile — the holding message must never let a real refund/cancel vanish
+        # silently. (GR-004 now only fires on a genuine over-limit disbursement, which
+        # PaymentTool blocks at source, so this should be vanishingly rare.)
+        committed = [
+            {"tool": s["tool"], "data": s.get("data")}
+            for s in state["execution_summary"]
+            if s.get("success") and s["tool"] in _MUTATING_TOOLS
+        ]
+        if committed:
+            logger.critical(
+                "POST_CHECK_BLOCK_WITH_COMMITTED_ACTIONS | rule blocked the reply but these "
+                "mutations had already persisted — needs reconciliation: %s",
+                json.dumps(committed, default=str),
+            )
         return {"guardrail_blocked": True, "final_response": verdict.user_message}
     return {}
 
@@ -1770,7 +1950,7 @@ async def responder_node(state: AtlasCareState, config) -> dict:
                 state.get("eval_feedback", ""), state.get("eval_retry_count", 0),
             )
             t0 = time.monotonic()
-            completion = await _get_groq_client().chat.completions.create(
+            completion = await _chat_completion_with_retry(
                 model=_responder_model(user_req, []),
                 messages=resp_messages,
                 max_tokens=1024,
@@ -1803,7 +1983,7 @@ async def responder_node(state: AtlasCareState, config) -> dict:
     )
 
     t0         = time.monotonic()
-    completion = await _get_groq_client().chat.completions.create(
+    completion = await _chat_completion_with_retry(
         model=_responder_model(user_request, state["execution_summary"]),
         messages=messages,
         max_tokens=1024,
@@ -1899,7 +2079,7 @@ async def evaluator_node(state: AtlasCareState, config) -> dict:
     ]
 
     t0 = time.monotonic()
-    completion = await _get_groq_client().chat.completions.create(
+    completion = await _chat_completion_with_retry(
         model=os.environ["PLANNER_MODEL"],
         messages=eval_messages,
         max_tokens=128,
