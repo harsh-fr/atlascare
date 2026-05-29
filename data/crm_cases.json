@@ -148,39 +148,6 @@
       "amount_inr": 42000.0,
       "trace_id": "trc-historical02",
       "created_at": "2026-05-17T14:34:07.089321+00:00"
-    },
-    {
-      "case_id": "CASE-D2D8E1",
-      "customer_id": "CUST-001",
-      "order_id": "ORD-10007",
-      "status": "open",
-      "priority": "high",
-      "description": "[ESCALATION CASE — AtlasCare]\nCustomer  : CUST-001\nOrder     : ORD-10007\nPriority  : HIGH\nAmount    : ₹25,001.00\nReason    : High-value refund request of ₹25,001.00 requires specialist review.\nAction    : Refund of ₹25,001.00 exceeds the ₹25,000 auto-refund threshold. Requires specialist review and manual refund approval via the Payments portal.\nTrace ID  : trc-34170f052df5\nCreated   : 2026-05-29 20:20 UTC",
-      "amount_inr": 25001.0,
-      "trace_id": "trc-34170f052df5",
-      "created_at": "2026-05-29T20:20:03.026374+00:00"
-    },
-    {
-      "case_id": "CASE-BF87C6",
-      "customer_id": "CUST-001",
-      "order_id": "ORD-10014",
-      "status": "open",
-      "priority": "high",
-      "description": "[ESCALATION CASE — AtlasCare]\nCustomer  : CUST-001\nOrder     : ORD-10014\nPriority  : HIGH\nAmount    : ₹55,000.00\nReason    : High-value refund request of ₹55,000.00 requires specialist review.\nAction    : Refund of ₹55,000.00 exceeds the ₹25,000 auto-refund threshold. Requires specialist review and manual refund approval via the Payments portal.\nTrace ID  : trc-34170f052df5\nCreated   : 2026-05-29 20:20 UTC",
-      "amount_inr": 55000.0,
-      "trace_id": "trc-34170f052df5",
-      "created_at": "2026-05-29T20:20:03.183930+00:00"
-    },
-    {
-      "case_id": "CASE-7C067F",
-      "customer_id": "CUST-001",
-      "order_id": "ORD-10008",
-      "status": "open",
-      "priority": "high",
-      "description": "[ESCALATION CASE — AtlasCare]\nCustomer  : CUST-001\nOrder     : ORD-10008\nPriority  : HIGH\nAmount    : N/A\nReason    : Auto-escalated by safety guardrail [fraud_or_unauthorised]. Customer message requires specialist handling; autonomous action withheld.\nAction    : Requires specialist review. Please contact the customer to resolve their query.\nTrace ID  : trc-38bc8624b65a\nCreated   : 2026-05-29 20:26 UTC",
-      "amount_inr": null,
-      "trace_id": "trc-38bc8624b65a",
-      "created_at": "2026-05-29T20:26:32.853292+00:00"
     }
   ]
 }
