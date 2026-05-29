@@ -50,13 +50,20 @@ def _make_tracer(session_id: str = "sess-test") -> Tracer:
 def _make_execution_summary(
     payment_success: bool = False,
     escalated: bool = False,
+    refund_amount: float = 1000.0,
 ) -> list[dict]:
-    """Build an execution_summary list matching graph.py format."""
+    """Build an execution_summary list matching graph.py format.
+
+    `refund_amount` is the amount on the disbursed refund record (defaults to a
+    low, under-limit value). GR-004 keys off this amount, not the co-occurrence
+    of a refund and an escalation.
+    """
     summary = []
     if payment_success:
         summary.append({
             "tool": "process_refund", "tool_call_id": "call_refund_01",
-            "success": True, "data": {"refund": {"status": "initiated"}},
+            "success": True,
+            "data": {"refund": {"status": "initiated", "amount_inr": refund_amount}},
             "error": "", "escalated": False,
         })
     if escalated:
@@ -162,6 +169,39 @@ class TestPreCheck:
         )
         assert verdict.blocked is True
         assert verdict.rule_id == "GR-001"
+
+    def test_gr001_bare_number_over_limit_blocks(self, guardrails):
+        """Regression: a bare over-limit amount with NO currency marker ('Refund
+        50000 for order ORD-10014') must still fast-escalate via GR-001."""
+        tracer = _make_tracer()
+        verdict = guardrails.pre_check(
+            message="Refund 50000 for order ORD-10014.",
+            customer_id="CUST-001",
+            tracer=tracer,
+        )
+        assert verdict.blocked is True
+        assert verdict.rule_id == "GR-001"
+
+    def test_gr001_order_id_digits_not_treated_as_amount(self, guardrails):
+        """The 5-digit order number must NOT be read as a refund amount: a refund
+        request naming only an order (no amount) must pass GR-001."""
+        tracer = _make_tracer()
+        verdict = guardrails.pre_check(
+            message="I'd like a refund for order ORD-10014, please.",
+            customer_id="CUST-001",
+            tracer=tracer,
+        )
+        assert verdict.blocked is False
+
+    def test_gr001_bare_under_limit_allows(self, guardrails):
+        """A bare under-limit refund amount is fine."""
+        tracer = _make_tracer()
+        verdict = guardrails.pre_check(
+            message="Please refund 18000 for my washing machine.",
+            customer_id="CUST-001",
+            tracer=tracer,
+        )
+        assert verdict.blocked is False
 
     def test_gr001_user_message_is_polite(self, guardrails):
         """Blocked message must be polite and not expose internals."""
@@ -275,23 +315,38 @@ class TestPostCheck:
     def guardrails(self):
         return Guardrails()
 
-    def test_gr004_payment_and_escalation_blocks(self, guardrails):
-        """CRITICAL: payment success + escalation = GR-004 block."""
+    def test_gr004_over_limit_refund_blocks(self, guardrails):
+        """CRITICAL: an autonomous refund DISBURSED over the ₹25,000 limit = GR-004 block."""
         tracer  = _make_tracer()
-        result  = _make_execution_summary(payment_success=True, escalated=True)
+        result  = _make_execution_summary(payment_success=True, refund_amount=30000.0)
         verdict = guardrails.post_check(execution_summary=result, tracer=tracer)
         assert verdict.blocked is True
         assert verdict.rule_id == "GR-004"
 
-    def test_gr004_payment_only_allows(self, guardrails):
-        """Payment without escalation is fine."""
+    def test_gr004_under_limit_refund_with_unrelated_escalation_allows(self, guardrails):
+        """Regression for trc-bb9d77683993: a legitimate under-limit refund on one
+        order plus an UNRELATED escalation on another must NOT be blocked."""
         tracer  = _make_tracer()
-        result  = _make_execution_summary(payment_success=True, escalated=False)
+        result  = _make_execution_summary(payment_success=True, escalated=True, refund_amount=18000.0)
+        verdict = guardrails.post_check(execution_summary=result, tracer=tracer)
+        assert verdict.blocked is False, "under-limit refund + unrelated escalation must pass"
+
+    def test_gr004_under_limit_refund_allows(self, guardrails):
+        """An under-limit disbursed refund is fine."""
+        tracer  = _make_tracer()
+        result  = _make_execution_summary(payment_success=True, refund_amount=5000.0)
+        verdict = guardrails.post_check(execution_summary=result, tracer=tracer)
+        assert verdict.blocked is False
+
+    def test_gr004_at_limit_refund_allows(self, guardrails):
+        """A refund exactly at the ₹25,000 limit is allowed (boundary)."""
+        tracer  = _make_tracer()
+        result  = _make_execution_summary(payment_success=True, refund_amount=25000.0)
         verdict = guardrails.post_check(execution_summary=result, tracer=tracer)
         assert verdict.blocked is False
 
     def test_gr004_escalation_only_allows(self, guardrails):
-        """Escalation without payment is fine."""
+        """Escalation without a disbursed refund is fine."""
         tracer  = _make_tracer()
         result  = _make_execution_summary(payment_success=False, escalated=True)
         verdict = guardrails.post_check(execution_summary=result, tracer=tracer)
@@ -305,9 +360,9 @@ class TestPostCheck:
         assert verdict.blocked is False
 
     def test_gr004_tracer_records_critical_trigger(self, guardrails):
-        """GR-004 trigger must be recorded as critical in tracer."""
+        """GR-004 trigger (over-limit refund) must be recorded as critical in tracer."""
         tracer = _make_tracer()
-        result = _make_execution_summary(payment_success=True, escalated=True)
+        result = _make_execution_summary(payment_success=True, refund_amount=30000.0)
         guardrails.post_check(execution_summary=result, tracer=tracer)
         assert tracer.had_guardrail_trigger()
         events = tracer.get_guardrail_events()

@@ -5,12 +5,9 @@ from decimal import Decimal
 from typing import Any
 
 from utils.money import round_inr
+from utils.payment_methods import REFUND_METHODS as _SUPPORTED_METHODS
 
 logger = logging.getLogger(__name__)
-
-_SUPPORTED_METHODS = {
-    "HDFC_CREDIT", "ICICI_DEBIT", "SBI_NETBANKING", "UPI", "original",
-}
 
 
 class RefundValidationError(Exception):

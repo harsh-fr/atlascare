@@ -24,11 +24,14 @@ class KbTool:
             logger.warning("KbTool.search called with empty tags list.")
             return []
 
-        query_tags   = {t.lower().strip() for t in tags if t}
-        all_articles = self._kb_repo.get_all_articles()
+        query_tags = {t.lower().strip() for t in tags if t}
+        # Use the repository's tag index to fetch only candidate articles that
+        # match at least one tag, then rank them by match score below — instead
+        # of scanning every article. (The result set is identical.)
+        candidates = self._kb_repo.find_by_tags(tags)
 
         scored: list[tuple[int, str, dict[str, Any]]] = []
-        for article in all_articles:
+        for article in candidates:
             article_tags = {t.lower().strip() for t in article.get("tags", [])}
             match_score  = len(query_tags & article_tags)
             if match_score > 0:

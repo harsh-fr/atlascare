@@ -1,6 +1,8 @@
 import re
 from typing import Any
 
+from utils.payment_methods import PAYMENT_METHODS_WITH_COD
+
 _ORDER_ID_RE    = re.compile(r"^ORD-\d{5}$")
 _CUSTOMER_ID_RE = re.compile(r"^CUST-\d{3}$")
 _CASE_ID_RE     = re.compile(r"^CASE-[A-Z0-9]{6}$")
@@ -11,7 +13,7 @@ _VALID_ITEM_STATUSES   = {"active", "cancelled"}
 _VALID_CASE_STATUSES   = {"open", "in_progress", "resolved", "closed"}
 _VALID_PRIORITIES      = {"low", "medium", "high"}
 _VALID_CUSTOMER_TIERS  = {"standard", "silver", "gold", "platinum"}
-_VALID_PAYMENT_METHODS = {"HDFC_CREDIT", "ICICI_DEBIT", "SBI_NETBANKING", "UPI", "original", "COD"}
+_VALID_PAYMENT_METHODS = set(PAYMENT_METHODS_WITH_COD)
 
 _MAX_REFUND_AMOUNT = 10_000_000.0
 _MIN_REFUND_AMOUNT = 0.01

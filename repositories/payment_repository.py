@@ -1,9 +1,11 @@
 import json
 import logging
 import os
+import threading
 from typing import Any
 
 from utils.file_ops import atomic_json_write, sort_by_recency
+from utils.payment_methods import DEFAULT_AUTO_REFUND_LIMIT_INR, REFUND_METHOD_ENUM
 
 logger = logging.getLogger(__name__)
 
@@ -25,6 +27,7 @@ class PaymentRepository:
         )
         self._config:  dict[str, Any]            = {}
         self._refunds: dict[str, dict[str, Any]] = {}
+        self._lock = threading.Lock()
         self._load_config()
         self._load_refunds()
         logger.debug(
@@ -36,7 +39,7 @@ class PaymentRepository:
         return dict(self._config)
 
     def get_auto_refund_limit(self) -> float:
-        return float(self._config.get("auto_refund_limit_inr", 25000.0))
+        return float(self._config.get("auto_refund_limit_inr", DEFAULT_AUTO_REFUND_LIMIT_INR))
 
     def get_refund_sla_days(self) -> int:
         return int(self._config.get("refund_sla_days", 5))
@@ -68,13 +71,14 @@ class PaymentRepository:
         refund_id = refund.get("refund_id")
         if not refund_id:
             raise ValueError("Cannot save refund without 'refund_id'.")
-        if refund_id in self._refunds:
-            raise ValueError(
-                f"Refund '{refund_id}' already exists. "
-                "Refund records are immutable — create a new record instead."
-            )
-        self._refunds[refund_id] = refund
-        self._flush_refunds()
+        with self._lock:
+            if refund_id in self._refunds:
+                raise ValueError(
+                    f"Refund '{refund_id}' already exists. "
+                    "Refund records are immutable — create a new record instead."
+                )
+            self._refunds[refund_id] = refund
+            self._flush_refunds()
         logger.debug(
             "PaymentRepository.save_refund | refund_id=%s | order=%s | amount=%.2f",
             refund_id, refund.get("order_id"), refund.get("amount_inr", 0.0),
@@ -84,10 +88,8 @@ class PaymentRepository:
         if not os.path.exists(self._config_path):
             logger.warning("Payment config not found at '%s' — using defaults.", self._config_path)
             self._config = {
-                "auto_refund_limit_inr": 25000.0,
-                "supported_methods": [
-                    "HDFC_CREDIT", "ICICI_DEBIT", "SBI_NETBANKING", "UPI", "original",
-                ],
+                "auto_refund_limit_inr": DEFAULT_AUTO_REFUND_LIMIT_INR,
+                "supported_methods": list(REFUND_METHOD_ENUM),
                 "refund_sla_days": 5,
                 "behaviour": {
                     "failure_rate": 0.03,

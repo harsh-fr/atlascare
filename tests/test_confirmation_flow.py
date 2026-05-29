@@ -180,6 +180,71 @@ class TestRequestConfirmationTool:
               if tc["action"] == "request_confirmation"]
         assert rc and rc[0]["status"] == "success"
 
+    def test_unsupported_method_in_confirmation_is_refused(self, client):
+        """The model must NOT be able to gate an unsupported refund method behind a
+        confirmation prompt. The handler refuses to stage it and surfaces the menu —
+        so the bot never asks 'are you sure?' for a method it can't refund to.
+        Neutral message + a non-hint method ('gift card') so the deterministic
+        message-level guard does not pre-empt the confirmation-handler path."""
+        body = _run(
+            client,
+            "Cancel item 1 from ORD-78321.",
+            [
+                _make_request_confirmation_mock(
+                    "cancel_item",
+                    {"order_id": "ORD-78321", "line_id": 1, "refund_method": "gift card"},
+                    "Cancel the item and refund to your gift card — are you sure?",
+                ),
+                make_text_mock("That method isn't supported — pick your original method or a supported one."),
+                make_approved_mock(),
+            ],
+        )
+        rc = [tc for tc in body["trace"]["tool_calls"]
+              if tc["action"] == "request_confirmation"]
+        assert rc and rc[0]["status"] == "error", \
+            "an unsupported refund method must not be staged for confirmation"
+
+    def test_low_value_cancel_skips_confirmation(self, client):
+        """Anti-overcaution: a confirmation staged for a low-value (≤₹5,000), concrete
+        cancel is executed directly as cancel_item — the bot does NOT ask 'are you
+        sure?'. (ORD-78321 line 3 is an ₹800 mouse.)"""
+        body = _run(
+            client,
+            "Cancel the wireless mouse on ORD-78321.",
+            [
+                _make_request_confirmation_mock(
+                    "cancel_item",
+                    {"order_id": "ORD-78321", "line_id": 3},
+                    "The Wireless Mouse costs ₹800. Are you sure you want to cancel it?",
+                ),
+                make_text_mock("Your Wireless Mouse has been cancelled and a refund initiated."),
+                make_approved_mock(),
+            ],
+        )
+        acts = _actions(body)
+        assert "cancel_item" in acts, "low-value cancel should execute directly"
+        assert "request_confirmation" not in acts, "low-value cancel must not be gated by confirmation"
+        cc = [tc for tc in body["trace"]["tool_calls"] if tc["action"] == "cancel_item"]
+        assert cc and cc[0]["status"] == "success"
+
+    def test_high_value_cancel_still_confirms(self, client):
+        """Guard the other side: a >₹5,000 item (line 1 = ₹55,000 laptop) is STILL
+        gated behind a confirmation — the bypass must not weaken that."""
+        body = _run(
+            client,
+            "Cancel the Dell laptop on ORD-78321.",
+            [
+                _make_request_confirmation_mock(
+                    "cancel_item",
+                    {"order_id": "ORD-78321", "line_id": 1},
+                    "The Dell laptop costs ₹55,000. Are you sure?",
+                ),
+                make_text_mock("The Dell laptop costs ₹55,000. Are you sure?"),
+            ],
+        )
+        assert "request_confirmation" in _actions(body)
+        assert "cancel_item" not in _actions(body), "high-value must wait for explicit confirmation"
+
 
 # ===========================================================================
 # Multi-turn integration tests

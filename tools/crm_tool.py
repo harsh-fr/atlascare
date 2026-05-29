@@ -20,7 +20,9 @@ class CaseCreationError(CrmError):
 class CrmTool:
     def __init__(self) -> None:
         self._crm_repo       = CrmRepository()
-        self._escalation_svc = EscalationService()
+        # Share the SAME repo instance so a case created via create_case is
+        # immediately visible to get_cases/list_cases in the same process.
+        self._escalation_svc = EscalationService(crm_repo=self._crm_repo)
         logger.debug("CrmTool initialised.")
 
     def _assert_customer_exists(self, customer_id: str) -> dict:

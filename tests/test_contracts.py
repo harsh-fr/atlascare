@@ -241,6 +241,37 @@ class TestDataSchemaConformance:
         required = {"HDFC_CREDIT", "ICICI_DEBIT", "SBI_NETBANKING", "UPI", "original"}
         assert required.issubset(methods)
 
+    def test_supported_methods_narrow_to_config(self, patched_env):
+        """payment_config.supported_methods is the source of truth: a rail dropped
+        from config is no longer accepted, even though code can route it."""
+        from tools.payment_tool import PaymentTool
+        resolved = PaymentTool._resolve_supported_methods(
+            {"supported_methods": ["UPI", "original"]}
+        )
+        assert resolved == frozenset({"UPI", "original"})
+        assert "HDFC_CREDIT" not in resolved
+
+    def test_supported_methods_always_allow_original(self, patched_env):
+        """'original' (refund to source) is always permitted, even if config omits it."""
+        from tools.payment_tool import PaymentTool
+        assert "original" in PaymentTool._resolve_supported_methods(
+            {"supported_methods": ["UPI"]}
+        )
+
+    def test_supported_methods_cannot_exceed_code_ceiling(self, patched_env):
+        """Config can only narrow, never introduce a rail the code can't route."""
+        from tools.payment_tool import PaymentTool
+        resolved = PaymentTool._resolve_supported_methods(
+            {"supported_methods": ["UPI", "AMEX_CREDIT", "BITCOIN"]}
+        )
+        assert resolved == frozenset({"UPI", "original"})
+
+    def test_supported_methods_missing_config_falls_back(self, patched_env):
+        """Missing/empty supported_methods must not disable all refunds."""
+        from tools.payment_tool import PaymentTool
+        from utils.payment_methods import REFUND_METHODS
+        assert PaymentTool._resolve_supported_methods({}) == REFUND_METHODS
+
     def test_refund_record_schema_after_creation(self, patched_env):
         from services.refund_service import RefundService
         record   = RefundService().create_refund_record(

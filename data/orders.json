@@ -20,7 +20,7 @@
           "name": "Python Crash Course Book",
           "quantity": 1,
           "unit_price": 750.0,
-          "status": "active"
+          "status": "cancelled"
         },
         {
           "line_id": 2,
@@ -28,7 +28,7 @@
           "name": "USB-C 7-in-1 Hub",
           "quantity": 1,
           "unit_price": 1500.0,
-          "status": "active"
+          "status": "cancelled"
         },
         {
           "line_id": 3,
@@ -36,10 +36,10 @@
           "name": "Bamboo Desk Organizer",
           "quantity": 1,
           "unit_price": 1000.0,
-          "status": "cancelled"
+          "status": "active"
         }
       ],
-      "total_amount": 2250.0,
+      "total_amount": 1000.0,
       "payment_method": "UPI"
     },
     {
@@ -50,10 +50,10 @@
       "estimated_delivery": "2026-05-30",
       "tracking_number": null,
       "shipping_address": {
-        "line1": "7 Park Street",
+        "line1": "12 MG Road, Koramangala",
         "city": "Bengaluru",
         "state": "Karnataka",
-        "pincode": "560001"
+        "pincode": "560034"
       },
       "items": [
         {
@@ -62,7 +62,7 @@
           "name": "Bosch Front Load Washing Machine",
           "quantity": 1,
           "unit_price": 18000.0,
-          "status": "active"
+          "status": "cancelled"
         },
         {
           "line_id": 2,
@@ -70,7 +70,7 @@
           "name": "Machine Installation Stand",
           "quantity": 1,
           "unit_price": 500.0,
-          "status": "cancelled"
+          "status": "active"
         },
         {
           "line_id": 3,
@@ -78,10 +78,10 @@
           "name": "Laundry Mesh Bag",
           "quantity": 1,
           "unit_price": 200.0,
-          "status": "cancelled"
+          "status": "active"
         }
       ],
-      "total_amount": 18000.0,
+      "total_amount": 700.0,
       "payment_method": "HDFC_CREDIT"
     },
     {
@@ -182,7 +182,7 @@
           "name": "Havells 1200mm Ceiling Fan",
           "quantity": 1,
           "unit_price": 2500.0,
-          "status": "cancelled"
+          "status": "active"
         },
         {
           "line_id": 2,
@@ -190,7 +190,7 @@
           "name": "Philips EasySpeed Steam Iron",
           "quantity": 1,
           "unit_price": 1299.0,
-          "status": "cancelled"
+          "status": "active"
         },
         {
           "line_id": 3,
@@ -198,10 +198,10 @@
           "name": "V-Guard Voltage Stabilizer",
           "quantity": 1,
           "unit_price": 3001.0,
-          "status": "cancelled"
+          "status": "active"
         }
       ],
-      "total_amount": 0.0,
+      "total_amount": 6800.0,
       "payment_method": "COD"
     },
     {
@@ -276,7 +276,7 @@
           "name": "Cotton Kurta Blue",
           "quantity": 1,
           "unit_price": 899.0,
-          "status": "active"
+          "status": "cancelled"
         },
         {
           "line_id": 2,
@@ -303,7 +303,7 @@
           "status": "active"
         }
       ],
-      "total_amount": 4396.0,
+      "total_amount": 3497.0,
       "payment_method": "COD"
     },
     {

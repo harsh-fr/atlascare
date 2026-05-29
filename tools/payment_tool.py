@@ -6,12 +6,15 @@ import time
 from typing import Any
 
 from utils.money import to_decimal
+from utils.payment_methods import REFUND_METHODS, DEFAULT_AUTO_REFUND_LIMIT_INR
 from repositories.payment_repository import PaymentRepository
 from services.refund_service import RefundService
 
 logger = logging.getLogger(__name__)
 
-AUTO_REFUND_LIMIT_INR: float = float(os.getenv("AUTO_REFUND_LIMIT_INR", "25000.0"))
+AUTO_REFUND_LIMIT_INR: float = float(
+    os.getenv("AUTO_REFUND_LIMIT_INR", str(DEFAULT_AUTO_REFUND_LIMIT_INR))
+)
 MAX_RETRIES: int              = int(os.getenv("PAYMENT_MAX_RETRIES", "3"))
 RETRY_BASE_DELAY_S: float     = float(os.getenv("PAYMENT_RETRY_BASE_DELAY_S", "0.5"))
 
@@ -33,13 +36,44 @@ class InvalidRefundAmountError(PaymentError):
 
 
 class PaymentTool:
-    _SUPPORTED_METHODS = {"HDFC_CREDIT", "ICICI_DEBIT", "SBI_NETBANKING", "UPI", "original"}
+    # Code-level ceiling of refund destinations the gateway can render/route.
+    # The LIVE supported set is narrowed to this ∩ payment_config.supported_methods
+    # in __init__ — see _resolve_supported_methods. Kept as the class default so a
+    # PaymentTool built without config still validates safely.
+    _SUPPORTED_METHODS = REFUND_METHODS
 
     def __init__(self) -> None:
         self._payment_repo = PaymentRepository()
         self._refund_svc   = RefundService()
         self._config       = self._payment_repo.get_config()
-        logger.debug("PaymentTool initialised | config=%s", self._config)
+        self._SUPPORTED_METHODS = self._resolve_supported_methods(self._config)
+        logger.debug(
+            "PaymentTool initialised | supported_methods=%s | config=%s",
+            sorted(self._SUPPORTED_METHODS), self._config,
+        )
+
+    @staticmethod
+    def _resolve_supported_methods(config: dict[str, Any]) -> frozenset[str]:
+        """Live refund-destination set = code ceiling ∩ payment_config.supported_methods.
+
+        payment_config.json is the source of truth for which rails are enabled, but
+        code is the ceiling: a method must already be one REFUND_METHODS can label
+        and route, so config can only ever *narrow* the set, never introduce a rail
+        the code can't honour. 'original' (refund to source) is always permitted —
+        it is the safe default, not a gateway rail. If config omits supported_methods
+        entirely we fall back to the full code set rather than disabling all refunds.
+        """
+        configured = config.get("supported_methods")
+        if not configured:
+            return REFUND_METHODS
+        enabled = REFUND_METHODS & set(configured)
+        unknown = set(configured) - REFUND_METHODS - {"original"}
+        if unknown:
+            logger.warning(
+                "payment_config.supported_methods lists methods the code cannot "
+                "route (ignored): %s", sorted(unknown),
+            )
+        return frozenset(enabled | {"original"})
 
     async def process_refund(
         self,
@@ -57,38 +91,22 @@ class PaymentTool:
             order_id, amount_inr, method, customer_id,
         )
 
-        import tools.payment_tool as _self_mod
-        max_retries      = _self_mod.MAX_RETRIES
-        retry_base_delay = _self_mod.RETRY_BASE_DELAY_S
-        last_error: Exception | None = None
-
-        for attempt in range(1, max_retries + 1):
-            try:
-                result = await self._call_gateway_with_retry(
-                    order_id=order_id,
-                    amount_inr=amount_inr,
-                    method=method,
-                    customer_id=customer_id,
-                )
-                logger.info(
-                    "PaymentTool.process_refund SUCCESS | refund_id=%s | "
-                    "order=%s | amount=%.2f | sla_days=%d",
-                    result["refund_id"], order_id, amount_inr, result["sla_days"],
-                )
-                return result
-            except PaymentGatewayError as exc:
-                last_error = exc
-                logger.warning(
-                    "process_refund attempt %d/%d failed | order=%s | error=%s",
-                    attempt, max_retries, order_id, exc,
-                )
-                if attempt < max_retries:
-                    await asyncio.sleep(retry_base_delay * (2 ** (attempt - 1)))
-
-        raise PaymentGatewayError(
-            f"Payment gateway failed after {max_retries} attempts "
-            f"for order '{order_id}'. Last error: {last_error}"
+        # _call_gateway_with_retry owns the single retry/backoff loop and raises
+        # PaymentGatewayError once all attempts are exhausted. (It used to be
+        # wrapped in a second retry loop here, which silently multiplied the
+        # attempt count to MAX_RETRIES**2 — removed.)
+        result = await self._call_gateway_with_retry(
+            order_id=order_id,
+            amount_inr=amount_inr,
+            method=method,
+            customer_id=customer_id,
         )
+        logger.info(
+            "PaymentTool.process_refund SUCCESS | refund_id=%s | "
+            "order=%s | amount=%.2f | sla_days=%d",
+            result["refund_id"], order_id, amount_inr, result["sla_days"],
+        )
+        return result
 
     def _validate_amount(self, amount_inr: float) -> None:
         if amount_inr is None or amount_inr <= 0:
