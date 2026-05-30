@@ -711,32 +711,36 @@ class TestRound2Fixes:
     """Regressions for the round-2 findings C1/C2 (cumulative threshold), C1b (mixed
     escalation evaluated), C3 (multi-word affirmatives), C5 (address sanitisation)."""
 
-    # --- C1/C2: split a high-value refund into <=limit chunks must escalate ---
-    def test_split_refund_escalates_on_cumulative_threshold(self, client, data_dir):
-        # 1st refund: ₹24,000 on a ₹42,000 delivered order — under the limit → auto.
-        _run(client, "Refund 24000 for ORD-78500 to original", [
+    # --- C1/C2: a refund on a delivered order whose ORDER VALUE exceeds the limit must
+    # escalate even when the REQUESTED amount is under the limit (closes the
+    # under-statement gap; the rule lived only in the prompt before). ---
+    def test_high_value_order_refund_escalates_regardless_of_amount(self, client, data_dir):
+        body = _run(client, "Refund 24000 for ORD-78500 to original", [
             make_tool_mock("process_refund",
                            {"order_id": "ORD-78500", "amount_inr": 24000.0, "method": "original"}),
-            make_text_mock("Your refund of ₹24,000 has been processed."),
+        ])
+        # ORD-78500 total is ₹42,000 (> ₹25,000) → escalate, NOT disbursed.
+        refunds = json.loads((data_dir / "refunds.json").read_text())["refunds"]
+        assert not any(r["order_id"] == "ORD-78500" for r in refunds), "no refund should disburse"
+        resp = body["response"].lower()
+        assert "specialist" in resp or "case" in resp
+
+    def test_within_limit_delivered_refund_auto_processes(self, client, data_dir):
+        # The flip side: a delivered order whose total is within the limit still auto-refunds.
+        _run(client, "Refund 5000 for ORD-78326 to original", [
+            make_tool_mock("process_refund",
+                           {"order_id": "ORD-78326", "amount_inr": 5000.0, "method": "original"}),
+            make_text_mock("Your refund of ₹5,000 has been processed."),
             make_approved_mock(),
         ])
-        refunds1 = json.loads((data_dir / "refunds.json").read_text())["refunds"]
-        assert len(refunds1) == 1 and refunds1[0]["amount_inr"] == 24000.0
-        # 2nd refund: ₹17,000 → cumulative ₹41,000 > ₹25,000 limit → escalate, NOT disbursed.
-        body2 = _run(client, "Now refund another 17000 for ORD-78500", [
-            make_tool_mock("process_refund",
-                           {"order_id": "ORD-78500", "amount_inr": 17000.0, "method": "original"}),
-        ])
-        refunds2 = json.loads((data_dir / "refunds.json").read_text())["refunds"]
-        assert len(refunds2) == 1, "the split second refund must NOT be disbursed"
-        resp = body2["response"].lower()
-        assert "specialist" in resp or "case" in resp
+        refunds = json.loads((data_dir / "refunds.json").read_text())["refunds"]
+        assert any(r["order_id"] == "ORD-78326" for r in refunds), "<=limit refund should disburse"
 
     # --- C1b: a MIXED escalation turn (escalation + a real action) is still evaluated ---
     def test_mixed_escalation_turn_is_evaluated(self, client):
-        body = _run(client, "Refund 1000 for ORD-78323, and escalate ORD-78321 too.", [
+        body = _run(client, "Refund 1000 for ORD-78326, and escalate ORD-78321 too.", [
             make_multi_tool_mock([
-                ("process_refund", {"order_id": "ORD-78323", "amount_inr": 1000.0, "method": "original"}),
+                ("process_refund", {"order_id": "ORD-78326", "amount_inr": 1000.0, "method": "original"}),
                 ("escalate",       {"order_id": "ORD-78321", "reason": "customer escalation"}),
             ]),
             make_text_mock("I've refunded ₹1,000 and escalated the other order to a specialist."),
@@ -919,9 +923,9 @@ class TestMixedEscalationResponder:
         """Disburse a refund on one delivered order AND escalate another (over-limit)
         in one turn → the LLM responder is used, not the canned escalation text."""
         custom = "Your Rs.800 refund is on its way; the high-value item is under specialist review."
-        body = _run(client, "Refund the mouse on ORD-78323 and the gaming laptop on ORD-78500.", [
+        body = _run(client, "Refund the earbuds on ORD-78326 and the gaming laptop on ORD-78500.", [
             make_multi_tool_mock([
-                ("process_refund", {"order_id": "ORD-78323", "amount_inr": 800.0, "method": "original"}),
+                ("process_refund", {"order_id": "ORD-78326", "amount_inr": 800.0, "method": "original"}),
                 ("process_refund", {"order_id": "ORD-78500", "amount_inr": 42000.0, "method": "original"}),
             ]),
             make_text_mock(custom),

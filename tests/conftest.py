@@ -344,6 +344,12 @@ def data_dir(tmp_path: Path) -> Path:
                 {"line_id": 1, "product_id": "P-HV", "name": "Gaming Laptop",
                  "quantity": 1, "unit_price": 42000.0, "status": "active"},
             ]),
+            # A delivered order whose TOTAL is within the auto-refund limit, so a direct
+            # process_refund is allowed (high-value delivered orders escalate instead).
+            _make_order("ORD-78326", "CUST-001", "delivered", items=[
+                {"line_id": 1, "product_id": "P-LV", "name": "Wireless Earbuds",
+                 "quantity": 1, "unit_price": 5000.0, "status": "active"},
+            ]),
             _make_order("ORD-99001", "CUST-002", "processing"),
         ]
     }

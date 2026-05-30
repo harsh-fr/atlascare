@@ -1384,21 +1384,23 @@ async def _handle_process_refund(args, customer_id, tracer):
             )
         }, "error", False
 
-    # Cumulative-threshold guard (C1/C2): the auto-refund limit applies to the TOTAL
-    # refunded per order, not just one request. Without this, a high-value refund can be
-    # SPLIT into several <=limit chunks (e.g. ₹24,000 + ₹17,000 on a ₹41,000 order) to
-    # extract the full amount autonomously and dodge the human review the limit exists
-    # for. A single request over the limit is still caught by _enforce_threshold below.
-    if already_refunded > 0 and already_refunded + amount_inr > AUTO_REFUND_LIMIT_INR:
+    # Code-enforced escalation for a high-value return (C1/C2). The agent prompt says a
+    # return/refund on a delivered order whose ORDER TOTAL exceeds the auto-refund limit
+    # must be escalated — but that rule lived ONLY in the prompt, so a weak model could
+    # dodge it by under-stating the amount (e.g. requesting ₹24,000 on a ₹41,000 order,
+    # which passes the per-request _enforce_threshold). Enforce it here on the order
+    # value so the human review can't be bypassed, and so the full amount can't be
+    # extracted in several <=limit chunks either (order_total > limit ⇒ always escalate).
+    if order_total > AUTO_REFUND_LIMIT_INR:
         case_id = await _create_specialist_refund_case(
             customer_id, oid,
-            reason=(f"Cumulative refunds for order '{oid}' (₹{already_refunded:,.2f} already "
-                    f"refunded + ₹{amount_inr:,.2f} requested) exceed the "
-                    f"₹{AUTO_REFUND_LIMIT_INR:,.0f} auto-refund limit — specialist review required."),
+            reason=(f"Return/refund on delivered order '{oid}' — order value "
+                    f"₹{order_total:,.2f} exceeds the ₹{AUTO_REFUND_LIMIT_INR:,.0f} "
+                    "auto-refund limit; specialist review required."),
             amount_inr=amount_inr, tracer=tracer,
         )
-        _safe_audit(customer_id, oid, "refund_escalated_cumulative", {
-            "already_refunded": already_refunded, "requested": amount_inr, "case_id": case_id,
+        _safe_audit(customer_id, oid, "refund_escalated_high_value_order", {
+            "order_total": order_total, "requested": amount_inr, "case_id": case_id,
         })
         return {"case_id": case_id, "escalated": True}, "success", True
 

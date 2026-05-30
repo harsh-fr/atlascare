@@ -263,13 +263,14 @@ class TestVagueHelpDetection:
 class TestRefundWithAmount:
 
     def test_refund_explicit_amount_succeeds(self, client):
-        # ORD-78323 is delivered — a direct refund is only valid post-delivery
-        # (processing orders must be cancelled via cancel_item, which auto-refunds).
-        body = _run(client, "I want a refund of Rs.24999 for order ORD-78323.", [
+        # ORD-78326 is delivered AND its order total (₹5,000) is within the auto-refund
+        # limit, so a direct refund is auto-processed. (A delivered order whose total is
+        # OVER the limit escalates instead — see test_high_value_order_refund_escalates.)
+        body = _run(client, "I want a refund of Rs.5000 for order ORD-78326.", [
             make_tool_mock("process_refund", {
-                "order_id": "ORD-78323", "amount_inr": 24999.0, "method": "original",
+                "order_id": "ORD-78326", "amount_inr": 5000.0, "method": "original",
             }),
-            make_text_mock("Your refund of ₹24,999 has been initiated."),
+            make_text_mock("Your refund of ₹5,000 has been initiated."),
             make_approved_mock(),
         ])
         rc = [tc for tc in body["trace"]["tool_calls"] if tc["action"] == "process_refund"]
