@@ -842,8 +842,19 @@ def _is_complex(message: str) -> bool:
 # Extend when adding tools whose results need filtering/ranking logic in the response.
 _PLANNER_RESPONSE_TOOLS = {"list_orders", "list_cases", "get_order"}
 
+# Matches a reply that is an affirmative POSSIBLY followed by confirming filler —
+# "yes", "yes go ahead", "ok do it", "sure, please cancel it". The old pattern required
+# the WHOLE message to be a single token, so a natural "yes go ahead" failed to resolve a
+# pending action (C3). This allowlists only *confirming* trailing words, so a qualified
+# reply that adds a NEW request ("ok show me all my orders", "yes but change the address")
+# still does NOT match and is not treated as a confirmation.
 _AFFIRMATIVE_RE = re.compile(
-    r'^\s*(yes|yeah|yep|yup|ok|okay|sure|go\s+ahead|proceed|do\s+it|confirm|absolutely|fine|alright)\s*[.!]?\s*$',
+    r"^\s*(?:yes|yeah|yep|yup|ya|ok|okay|sure|alright|absolutely|definitely|correct|"
+    r"confirm(?:ed)?|go\s+ahead|proceed|do\s+it|please\s+do|sounds\s+good|"
+    r"that'?s\s+right|affirmative|fine)"
+    r"(?:[\s,.!]+(?:yes|please|go\s+ahead|do\s+it|proceed|confirm(?:ed)?|sure|thanks?|"
+    r"thank\s+you|that'?s\s+right|cancel\s+it|now|then|absolutely|ok|okay))*"
+    r"[\s,.!]*$",
     re.IGNORECASE,
 )
 _NEGATIVE_RE = re.compile(
@@ -1373,6 +1384,24 @@ async def _handle_process_refund(args, customer_id, tracer):
             )
         }, "error", False
 
+    # Cumulative-threshold guard (C1/C2): the auto-refund limit applies to the TOTAL
+    # refunded per order, not just one request. Without this, a high-value refund can be
+    # SPLIT into several <=limit chunks (e.g. ₹24,000 + ₹17,000 on a ₹41,000 order) to
+    # extract the full amount autonomously and dodge the human review the limit exists
+    # for. A single request over the limit is still caught by _enforce_threshold below.
+    if already_refunded > 0 and already_refunded + amount_inr > AUTO_REFUND_LIMIT_INR:
+        case_id = await _create_specialist_refund_case(
+            customer_id, oid,
+            reason=(f"Cumulative refunds for order '{oid}' (₹{already_refunded:,.2f} already "
+                    f"refunded + ₹{amount_inr:,.2f} requested) exceed the "
+                    f"₹{AUTO_REFUND_LIMIT_INR:,.0f} auto-refund limit — specialist review required."),
+            amount_inr=amount_inr, tracer=tracer,
+        )
+        _safe_audit(customer_id, oid, "refund_escalated_cumulative", {
+            "already_refunded": already_refunded, "requested": amount_inr, "case_id": case_id,
+        })
+        return {"case_id": case_id, "escalated": True}, "success", True
+
     try:
         refund = await _payment.process_refund(oid, amount_inr, method, customer_id)
         _safe_audit(customer_id, oid, "refund_processed", {
@@ -1407,9 +1436,24 @@ async def _handle_update_address(args, customer_id, tracer):
         })
     return result, "success", False
 
+# Address fields must never carry markup or control characters — an injected
+# <script>...</script> would otherwise persist and run when an operator views the order
+# in the admin dashboard (stored XSS). Reject angle brackets and control chars. (C5)
+_UNSAFE_ADDRESS_RE = re.compile(r"[<>]|[\x00-\x1f\x7f]")
+
+
 async def _handle_update_address_raw(args, customer_id, tracer):
     oid = _clean_order_id(args["order_id"])
     await _fetch_owned_order(oid, customer_id)
+    for field in ("line1", "line2", "city", "state", "pincode"):
+        value = args.get(field)
+        if value is not None and _UNSAFE_ADDRESS_RE.search(str(value)):
+            return {
+                "error": (
+                    "That address contains characters I can't accept (for example < or >). "
+                    "Please re-send it using only letters, numbers, spaces, commas, and hyphens."
+                )
+            }, "error", False
     result = await _oms.update_shipping_address_raw(
         order_id=oid,
         line1=args["line1"],
@@ -2401,8 +2445,13 @@ async def evaluator_node(state: AtlasCareState, config) -> dict:
             pass  # fall through to LLM evaluation below
         else:
             return {"eval_approved": True}
-    if any(s.get("escalated") for s in state["execution_summary"]):
-        return {"eval_approved": True}   # deterministic escalation response needs no check
+    if any(s.get("escalated") for s in state["execution_summary"]) \
+            and _is_pure_escalation_turn(state["execution_summary"]):
+        # Only a PURE escalation uses the deterministic canned message (no LLM) and needs
+        # no check. A MIXED turn (escalation + a real action and/or a staged confirmation)
+        # is LLM-written, so it must still be judged — otherwise a reply that falsely
+        # claims a completed action slips through on the escalation bypass (C1b).
+        return {"eval_approved": True}
     tools_called = {s["tool"] for s in state["execution_summary"]}
     # NB: confirmation turns are NOT bypassed here. The reply is rendered deterministically
     # for a PURE confirmation (responder_node), but a MIXED turn (a real mutation + a staged

@@ -707,6 +707,77 @@ class TestPressureBatteryFixes:
         assert _statuses(body).count("success") >= 1       # the first escalation still ran
 
 
+class TestRound2Fixes:
+    """Regressions for the round-2 findings C1/C2 (cumulative threshold), C1b (mixed
+    escalation evaluated), C3 (multi-word affirmatives), C5 (address sanitisation)."""
+
+    # --- C1/C2: split a high-value refund into <=limit chunks must escalate ---
+    def test_split_refund_escalates_on_cumulative_threshold(self, client, data_dir):
+        # 1st refund: ₹24,000 on a ₹42,000 delivered order — under the limit → auto.
+        _run(client, "Refund 24000 for ORD-78500 to original", [
+            make_tool_mock("process_refund",
+                           {"order_id": "ORD-78500", "amount_inr": 24000.0, "method": "original"}),
+            make_text_mock("Your refund of ₹24,000 has been processed."),
+            make_approved_mock(),
+        ])
+        refunds1 = json.loads((data_dir / "refunds.json").read_text())["refunds"]
+        assert len(refunds1) == 1 and refunds1[0]["amount_inr"] == 24000.0
+        # 2nd refund: ₹17,000 → cumulative ₹41,000 > ₹25,000 limit → escalate, NOT disbursed.
+        body2 = _run(client, "Now refund another 17000 for ORD-78500", [
+            make_tool_mock("process_refund",
+                           {"order_id": "ORD-78500", "amount_inr": 17000.0, "method": "original"}),
+        ])
+        refunds2 = json.loads((data_dir / "refunds.json").read_text())["refunds"]
+        assert len(refunds2) == 1, "the split second refund must NOT be disbursed"
+        resp = body2["response"].lower()
+        assert "specialist" in resp or "case" in resp
+
+    # --- C1b: a MIXED escalation turn (escalation + a real action) is still evaluated ---
+    def test_mixed_escalation_turn_is_evaluated(self, client):
+        body = _run(client, "Refund 1000 for ORD-78323, and escalate ORD-78321 too.", [
+            make_multi_tool_mock([
+                ("process_refund", {"order_id": "ORD-78323", "amount_inr": 1000.0, "method": "original"}),
+                ("escalate",       {"order_id": "ORD-78321", "reason": "customer escalation"}),
+            ]),
+            make_text_mock("I've refunded ₹1,000 and escalated the other order to a specialist."),
+            make_approved_mock(),
+        ])
+        assert "evaluate" in _actions(body), "a mixed escalation turn must NOT bypass the evaluator"
+
+    # --- C3: multi-word affirmatives resolve a confirmation; new requests do not ---
+    def test_multiword_affirmatives(self, patched_env):
+        from agent.graph import _AFFIRMATIVE_RE as rx
+        for ok in ("yes go ahead", "yes please", "ok do it", "sure, cancel it",
+                   "yes, proceed", "go ahead", "do it now", "yes confirm"):
+            assert rx.match(ok), ok
+        for no in ("ok show me all my orders", "yes but change the address too",
+                   "yes cancel ORD-78321 instead", "I want to cancel the laptop"):
+            assert not rx.match(no), no
+
+    # --- C5: address markup/control chars are rejected, never persisted ---
+    def test_unsafe_address_regex(self, patched_env):
+        from agent.graph import _UNSAFE_ADDRESS_RE as rx
+        assert rx.search("<script>alert(1)</script>")
+        assert rx.search("Robert'); DROP TABLE orders;-- <x>")
+        assert rx.search("line\twith\ttabs")
+        assert not rx.search("12 MG Road, Koramangala")
+        assert not rx.search("4th Floor, Prestige Tower - Block B")
+
+    def test_address_injection_rejected_and_not_persisted(self, client, data_dir):
+        body = _run(client, "Update ORD-78321 address to a new place", [
+            make_tool_mock("update_address_raw", {
+                "order_id": "ORD-78321", "line1": "<script>alert(document.cookie)</script>",
+                "city": "X", "state": "Y", "pincode": "000000",
+            }),
+            make_text_mock("I couldn't update the address."),
+            make_approved_mock(),
+        ])
+        # the raw payload must never reach the stored order
+        orders = json.loads((data_dir / "orders.json").read_text())["orders"]
+        o = next(x for x in orders if x["order_id"] == "ORD-78321")
+        assert "<script>" not in o["shipping_address"]["line1"]
+
+
 class TestProductCategoryDerivation:
     """Product->category and category->policies are DERIVED purely from the canonical
     files: the category vocab comes from kb_articles.applies_to, classification is a
