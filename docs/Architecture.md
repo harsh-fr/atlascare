@@ -2,7 +2,7 @@
 
 ## 1. System Overview
 
-AtlasCare is a production-grade Agentic AI layer for Acme Retail's customer support platform. It handles ~18,000 interactions/day autonomously for Tier-1 queries while safely escalating those it cannot resolve.
+AtlasCare is a production-grade Agentic AI layer for Acme Retail's customer support platform. It handles Tier-1 queries autonomously — order tracking, cancellations, refunds, and policy questions across 14 product categories — while safely escalating anything it should not resolve on its own.
 
 **Core design principle: Deterministic > Generative.**
 The LLM is used only where intelligence is genuinely valuable (intent extraction, natural language phrasing). All policy enforcement, arithmetic, ownership checks, and business rules live in deterministic Python code.
@@ -54,35 +54,50 @@ The compiled `StateGraph` wired in `agent/graph.py::build_graph()`, rendered dir
 ```mermaid
 graph TD;
 	__start__([__start__]):::first
+	input_redaction(input_redaction)
 	confirmation_check(confirmation_check)
 	pre_guardrail(pre_guardrail)
+	policy_grounding(policy_grounding)
 	tool_agent(tool_agent)
 	tool_executor(tool_executor)
 	post_guardrail(post_guardrail)
 	responder(responder)
 	evaluator(evaluator)
 	__end__([__end__]):::last
-	__start__ --> confirmation_check;
+	__start__ --> input_redaction;
+	input_redaction --> confirmation_check;
 	confirmation_check -. end .-> __end__;
 	confirmation_check -.-> post_guardrail;
 	confirmation_check -.-> pre_guardrail;
-	evaluator -. end .-> __end__;
-	evaluator -.-> responder;
-	post_guardrail -. end .-> __end__;
-	post_guardrail -.-> responder;
 	pre_guardrail -. end .-> __end__;
-	pre_guardrail -.-> tool_agent;
-	responder --> evaluator;
+	pre_guardrail -. continue .-> policy_grounding;
+	policy_grounding -. "policy Q&A (RAG)" .-> responder;
+	policy_grounding -. action .-> tool_agent;
 	tool_agent -. respond .-> post_guardrail;
 	tool_agent -. tools .-> tool_executor;
 	tool_executor -.-> post_guardrail;
 	tool_executor -.-> tool_agent;
+	post_guardrail -. end .-> __end__;
+	post_guardrail -.-> responder;
+	responder --> evaluator;
+	evaluator -. end .-> __end__;
+	evaluator -.-> responder;
 	classDef default fill:#f2f0ff,line-height:1.2
 	classDef first fill-opacity:0
 	classDef last fill:#bfb6fc
 ```
 
-**Node roles:** `confirmation_check` resolves a pending high-value confirmation from a prior turn before anything else; `pre_guardrail`/`post_guardrail` enforce deterministic policy (§6); `tool_agent` selects tools or writes a direct reply; `tool_executor` runs tools (and may loop back to `tool_agent` for a follow-up call); `responder` phrases the reply; `evaluator` checks the reply against tool results and can route back to `responder` for one retry. To regenerate this diagram: `build_graph().get_graph().draw_mermaid()`.
+**Node roles:**
+- `input_redaction` — the real front door; deterministically masks card/CVV/email/phone before the message reaches history, the model, or any log.
+- `confirmation_check` — resolves a pending high-value confirmation from a prior turn before anything else.
+- `pre_guardrail` — deterministic policy before the model (§6): over-limit refunds, fraud/safety escalation, order-ID format, ambiguous-query check.
+- `policy_grounding` — splits **Q&A from actions**. A general policy question is answered straight from the knowledge base — scoped to the in-context order's product **category** — and skips the planner entirely. An order action falls through to `tool_agent`.
+- `tool_agent` / `tool_executor` — select and run tools; `tool_executor` may loop back to `tool_agent` for a follow-up call (e.g. get_order → cancel_item).
+- `post_guardrail` — last money-safety net after tools run (§6).
+- `responder` — phrases the reply from verified tool results (or grounded policy text), never the customer's unverified claims.
+- `evaluator` — an LLM judge that checks the reply and can route back to `responder` for exactly one retry.
+
+To regenerate this diagram: `build_graph().get_graph().draw_mermaid()`.
 
 ---
 
@@ -91,13 +106,18 @@ graph TD;
 | Step | Node | Model | What happens |
 |------|------|-------|--------------|
 | 1 | main.py | — | `session_id` → `customer_id` via SessionStore |
-| 2 | `pre_guardrail` | — (code) | GR-001/002/003 checks; order ID format validation; history-aware ambiguous-query check |
-| 3 | `tool_agent` | **Llama 3.3 70B** (complex) or **8B** (simple) | Selects tools to call, or writes a direct reply |
-| 4 | `tool_executor` | — (code) | Dispatches each tool call with ownership validation |
-| 5 | `post_guardrail` | — (code) | GR-004: verifies no payment on escalation case |
-| 6 | `responder` | **Llama 3.1 8B Instant** | Formats tool results into a natural customer reply |
+| 2 | `input_redaction` | — (code) | Masks card/CVV/email/phone before history, model, or logs |
+| 3 | `pre_guardrail` | — (code) | GR-001/002/003 checks; order ID format; history-aware ambiguous-query check |
+| 4 | `policy_grounding` | — (code) | General policy question → fetch matching KB articles (by tag **and** the in-context order's category), route straight to `responder`; otherwise continue to the planner |
+| 5 | `tool_agent` | **Llama 3.3 70B** (complex) or **8B** (simple) | Selects tools to call, or writes a direct reply |
+| 6 | `tool_executor` | — (code) | Dispatches each tool call with ownership validation |
+| 7 | `post_guardrail` | — (code) | GR-004: verifies no payment on escalation case |
+| 8 | `responder` | **Llama 3.1 8B Instant** | Formats tool results / grounded policy into a natural reply |
+| 9 | `evaluator` | **Llama 3.3 70B** | Judges the reply against the results; allows one retry |
 
-For no-tool requests (greetings, chitchat), `tool_agent` writes a direct reply and the pipeline skips `tool_executor` → `post_guardrail` → goes straight to `responder`, which uses the agent's text as-is (no second LLM call).
+For a general policy question, `policy_grounding` answers from the knowledge base and **skips the planner and tools entirely** — one grounded call, not a tool loop.
+
+For no-tool requests (greetings, chitchat), `tool_agent` writes a direct reply and the pipeline skips `tool_executor` → `post_guardrail` → goes straight to `responder`.
 
 For escalations, `responder` uses a deterministic template (no LLM call).
 
@@ -131,8 +151,15 @@ Tools are typed async interfaces. They are the **only** layer that touches repos
 | CrmTool | get_customer, create_case, get_cases | CrmRepository |
 | PaymentTool | process_refund | PaymentRepository |
 | KbTool | search, get_article | KbRepository |
+| CategoryRepository | category_for_product, categories_for_order, policies_for_category | product_categories / category_policies |
 
 Tools are swappable — replacing JSON repos with REST APIs requires only changing the repository layer.
+
+### 5.1 Policy retrieval (RAG), by tag **and** category
+
+A general policy question is answered from the knowledge base, not the model's memory. `policy_grounding` maps the question to KB tags and retrieves matching articles. When an order is in context, it also resolves that order's product **category** (via `product_categories.json`) and keeps only the articles whose `applies_to` includes it. So "what's the return window?" returns the **electronics** policy (7 days) for a headphones order but the **apparel** policy (30 days) for a saree.
+
+One subtlety: the category filter runs over the *full* tag-matched candidate set before truncating to the top results — otherwise a category's article that ranks low on tags alone (a `return`-only beauty article vs. generic `return`+`window` ones) would be cut before the filter could select it. Articles are ranked by tag-match count, then precision (share of the article's own tags that matched), then a stable id — not edit-recency.
 
 ---
 
@@ -180,15 +207,27 @@ The `TraceStore` is an in-memory ring buffer (last 500 traces) exposed via `/adm
 
 All data is stored in JSON files under `data/`. Repositories maintain in-memory indexes (O(1) lookup) and flush to disk atomically using write-to-temp + `os.replace()` to prevent corruption.
 
+**Canonical (you supply these four — the only inputs):**
+
 | File | Repository | Access |
 |------|------------|--------|
 | `orders.json` | OrderRepository | read/write |
 | `crm_cases.json` | CrmRepository | read/write |
 | `kb_articles.json` | KbRepository | read-only |
 | `payment_config.json` | PaymentRepository | read-only |
-| `refunds.json` | PaymentRepository | append-only |
-| `sessions.json` | SessionStore | read-only |
-| `users.json` | UserRepository | read/write |
+
+**Derived on startup** (`data/derive_support_files.py`, a pure function of the four above):
+
+| File | Repository | Notes |
+|------|------------|-------|
+| `users.json` | UserRepository | one login per customer |
+| `sessions.json` | SessionStore | one session per customer |
+| `refunds.json` | PaymentRepository | append-only ledger, never overwritten |
+| `order_audit_log.json` | AuditRepository | append-only ledger, never overwritten |
+| `category_policies.json` | CategoryRepository | category → applicable policy articles (inverts `applies_to`) |
+| `product_categories.json` | CategoryRepository | product → category (deterministic keyword classifier) |
+
+The category **vocabulary is read from `kb_articles.applies_to`** — never hardcoded. Products are classified by a deterministic keyword cross-check (no LLM, so it is reproducible and needs no network at boot); anything unmatched falls to `misc`.
 
 ---
 
