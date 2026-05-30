@@ -278,44 +278,86 @@ def derive_sessions(customers: list[dict[str, Any]]) -> list[dict[str, Any]]:
 # in kb_articles.json / payment_config.json.
 _CATEGORY_KEYWORD_BUCKET: dict[str, list[str]] = {
     "electronics": [
-        "laptop", "macbook", "notebook", "ultrabook", "desktop", "computer",
+        "laptop", "macbook", "ultrabook", "desktop", "computer",
         "phone", "smartphone", "galaxy", "iphone", "pixel", "oneplus", "redmi",
-        "tablet", "ipad", "tab", "kindle", "e-reader",
-        "tv", "television", "bravia", "oled", "qled", "led tv", "monitor", "display",
-        "headphone", "earphone", "earbud", "airpod", "airpods", "speaker", "soundbar",
+        "tablet", "ipad", "kindle", "e-reader",
+        "tv", "television", "oled", "qled", "led tv", "monitor", "display",
+        "headphone", "earphone", "earbud", "airpod", "airpods", "soundbar", "soundbox",
         "smartwatch", "apple watch", "fitbit", "fitness band", "smart band",
-        "camera", "gopro", "dslr", "lens", "drone",
-        "usb", "hub", "dock", "charger", "adapter", "powerbank", "power bank", "cable",
+        "camera", "gopro", "dslr", "drone",
+        "usb", "dock", "charger", "adapter", "powerbank", "power bank",
         "router", "modem", "console", "playstation", "xbox", "ssd", "pendrive",
-        "keyboard", "mouse", "webcam", "printer", "projector", "soundbox",
+        "keyboard", "webcam", "printer", "projector",
     ],
     "apparel": [
         "kurta", "kurti", "saree", "sari", "dupatta", "palazzo", "stole", "lehenga",
-        "salwar", "shirt", "t-shirt", "tshirt", "tee", "top", "blouse", "jeans",
+        "salwar", "shirt", "t-shirt", "tshirt", "tee", "blouse", "jeans",
         "trouser", "pant", "pants", "shorts", "dress", "skirt", "jacket", "coat",
-        "sweater", "hoodie", "ethnic", "saree blouse", "leggings",
-        "shoe", "sneaker", "sandal", "jutti", "juttis", "heel", "boot", "footwear",
-        "slipper", "loafer", "flip flop",
-        "anklet", "earring", "necklace", "bracelet", "jewellery", "jewelry", "ring",
-        "bangle", "watch", "analog watch", "scarf", "belt", "handbag", "wallet",
-        "cap", "hat", "sunglasses", "tie",
-        "perfume", "fragrance", "cologne", "deodorant", "eau de",
+        "sweater", "hoodie", "ethnic", "leggings", "scarf", "saree blouse",
+    ],
+    "footwear": [
+        "shoe", "shoes", "sneaker", "sneakers", "sandal", "sandals", "jutti", "juttis",
+        "heel", "heels", "boot", "boots", "footwear", "slipper", "slippers",
+        "loafer", "loafers", "flip flop", "moccasin", "sliders", "wedge",
+    ],
+    "furniture": [
+        "chair", "table", "study table", "dining table", "desk", "sofa", "couch",
+        "recliner", "bed", "bed frame", "mattress", "bookshelf", "shelf", "rack",
+        "wardrobe", "cabinet", "stool", "dresser", "ottoman", "bench",
     ],
     "home_goods": [
-        "ac", "air conditioner", "conditioner", "refrigerator", "fridge", "freezer",
-        "washing machine", "washer", "dryer", "dishwasher", "microwave", "oven",
+        "ac", "air conditioner", "refrigerator", "fridge", "freezer",
+        "washing machine", "washer", "dryer", "dishwasher",
         "air purifier", "purifier", "fan", "ceiling fan", "cooler", "heater", "geyser",
-        "iron", "steam iron", "vacuum", "stabilizer", "voltage", "inverter",
-        "chair", "table", "desk", "sofa", "bed", "mattress", "shelf", "rack",
-        "organizer", "wardrobe", "cabinet",
-        "cover", "stand", "mount", "laundry", "mesh bag", "curtain", "cushion",
-        "bedsheet", "pillow", "blanket", "towel", "doormat", "carpet", "rug",
-        "cookware", "utensil", "pan", "pot", "kettle", "mixer", "grinder", "blender",
-        "toaster", "furniture", "lamp", "bulb", "tube light",
+        "iron", "steam iron", "vacuum", "vacuum cleaner", "stabilizer", "inverter",
+        "curtain", "cushion", "bedsheet", "pillow", "blanket", "doormat", "carpet", "rug",
     ],
+    "kitchen": [
+        "mixer", "grinder", "mixer grinder", "cooker", "pressure cooker", "microwave",
+        "oven", "cookware", "kettle", "electric kettle", "blender", "toaster",
+        "food processor", "induction", "utensil", "pan", "frying pan", "pot", "tawa",
+    ],
+    "stationery": [
+        "notebook", "notebooks", "pen", "pens", "gel pen", "pencil", "eraser",
+        "sticky notes", "sticky note", "notes", "printer paper", "paper", "ream",
+        "planner", "diary", "marker", "highlighter", "stapler", "folder", "envelope",
+    ],
+    "hardware": [
+        "drill", "drill machine", "screwdriver", "hammer", "wrench", "spanner",
+        "tool kit", "toolkit", "tool", "tools", "paint", "wall paint", "ladder",
+        "nails", "screws", "plier", "pliers", "measuring tape", "saw", "power tool",
+    ],
+    "beauty": [
+        "perfume", "fragrance", "cologne", "deodorant", "eau de", "lipstick", "lip balm",
+        "cream", "face cream", "moisturizer", "shampoo", "serum", "face serum",
+        "foundation", "mascara", "kajal", "sunscreen", "lotion", "nail polish",
+        "cosmetic", "makeup",
+    ],
+    "books": [
+        "book", "books", "novel", "textbook", "text book", "cookbook", "comic", "comics",
+        "guide", "paperback", "hardcover", "story book", "magazine", "encyclopedia",
+    ],
+    "sports": [
+        "cricket bat", "bat", "yoga mat", "yoga", "dumbbell", "dumbbells", "football",
+        "basketball", "badminton racket", "racket", "racquet", "treadmill",
+        "skipping rope", "helmet", "cycle", "bicycle", "tennis", "glove", "gloves",
+    ],
+    "toys": [
+        "lego", "board game", "action figure", "figure", "soft toy", "toy", "toys",
+        "puzzle", "jigsaw", "doll", "rc car", "remote control car", "building blocks",
+        "rubik", "stuffed", "play set", "teddy",
+    ],
+    "jewelry": [
+        "necklace", "ring", "rings", "earring", "earrings", "bracelet", "bangle",
+        "bangles", "pendant", "chain", "analog watch", "watch", "anklet", "brooch",
+        "nose pin", "toe ring", "jewellery", "jewelry",
+    ],
+    # 'misc' is the fallback bucket: intentionally has NO keywords, so a product only
+    # lands here when nothing else matches (see _DEFAULT_FALLBACK_CATEGORY).
+    "misc": [],
 }
 
-_DEFAULT_FALLBACK_CATEGORY = "home_goods"
+_DEFAULT_FALLBACK_CATEGORY = "misc"
 
 
 def _categories_from_kb(articles: list[dict[str, Any]]) -> list[str]:

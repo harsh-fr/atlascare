@@ -13,14 +13,7 @@
         "ORD-10004",
         "ORD-10005",
         "ORD-10006",
-        "ORD-10007",
-        "ORD-10008",
-        "ORD-10009",
-        "ORD-10010",
-        "ORD-10011",
-        "ORD-10012",
-        "ORD-10013",
-        "ORD-10014"
+        "ORD-10007"
       ],
       "preferred_refund_method": "HDFC_CREDIT",
       "addresses": [
@@ -33,7 +26,7 @@
         },
         {
           "label": "office",
-          "line1": "4th Floor, Prestige Tower, Outer Ring Road",
+          "line1": "4th Floor, Prestige Tower, ORR",
           "city": "Bengaluru",
           "state": "Karnataka",
           "pincode": "560103"
@@ -49,7 +42,9 @@
       "order_ids": [
         "ORD-20001",
         "ORD-20002",
-        "ORD-20003"
+        "ORD-20003",
+        "ORD-20004",
+        "ORD-20005"
       ],
       "preferred_refund_method": "UPI",
       "addresses": [
@@ -59,13 +54,6 @@
           "city": "Mumbai",
           "state": "Maharashtra",
           "pincode": "400050"
-        },
-        {
-          "label": "office",
-          "line1": "WeWork BKC, Bandra Kurla Complex",
-          "city": "Mumbai",
-          "state": "Maharashtra",
-          "pincode": "400051"
         }
       ]
     },
@@ -77,7 +65,9 @@
       "tier": "standard",
       "order_ids": [
         "ORD-30001",
-        "ORD-30002"
+        "ORD-30002",
+        "ORD-30003",
+        "ORD-30004"
       ],
       "preferred_refund_method": "original",
       "addresses": [
@@ -98,7 +88,9 @@
       "tier": "silver",
       "order_ids": [
         "ORD-40001",
-        "ORD-40002"
+        "ORD-40002",
+        "ORD-40003",
+        "ORD-40004"
       ],
       "preferred_refund_method": "ICICI_DEBIT",
       "addresses": [
@@ -108,20 +100,30 @@
           "city": "Noida",
           "state": "Uttar Pradesh",
           "pincode": "201301"
-        },
+        }
+      ]
+    },
+    {
+      "customer_id": "CUST-005",
+      "name": "Sneha Reddy",
+      "email": "sneha.reddy@email.com",
+      "phone": "+91-9090909090",
+      "tier": "gold",
+      "order_ids": [
+        "ORD-50001",
+        "ORD-50002",
+        "ORD-50003",
+        "ORD-50004",
+        "ORD-50005"
+      ],
+      "preferred_refund_method": "UPI",
+      "addresses": [
         {
-          "label": "office",
-          "line1": "Tower C, Cyber City, DLF Phase 2",
-          "city": "Gurugram",
-          "state": "Haryana",
-          "pincode": "122002"
-        },
-        {
-          "label": "parents",
-          "line1": "12 Civil Lines",
-          "city": "Allahabad",
-          "state": "Uttar Pradesh",
-          "pincode": "211001"
+          "label": "home",
+          "line1": "17 Hauz Khas Village",
+          "city": "New Delhi",
+          "state": "Delhi",
+          "pincode": "110016"
         }
       ]
     }
@@ -130,24 +132,46 @@
     {
       "case_id": "CASE-HIST01",
       "customer_id": "CUST-001",
-      "order_id": "ORD-10003",
+      "order_id": "ORD-10004",
       "status": "resolved",
       "priority": "medium",
-      "description": "[ESCALATION CASE - AtlasCare]\nCustomer  : CUST-001\nOrder     : ORD-10003\nPriority  : MEDIUM\nAmount    : N/A\nReason    : Reported wrong size delivered.\nAction    : Requires specialist review.\nTrace ID  : trc-historical01",
+      "description": "Customer reported wrong-colour headphones delivered on ORD-10004. Replacement arranged.",
       "amount_inr": null,
       "trace_id": "trc-historical01",
-      "created_at": "2026-05-07T14:34:07.089321+00:00"
+      "created_at": "2026-05-16T10:00:00Z"
     },
     {
-      "case_id": "CASE-OPEN01",
-      "customer_id": "CUST-001",
-      "order_id": "ORD-10008",
+      "case_id": "CASE-OPEN02",
+      "customer_id": "CUST-002",
+      "order_id": "ORD-20002",
       "status": "open",
       "priority": "high",
-      "description": "[ESCALATION CASE - AtlasCare]\nCustomer  : CUST-001\nOrder     : ORD-10008\nPriority  : HIGH\nAmount    : 42000.00\nReason    : Customer reported damaged laptop on delivery.\nAction    : Specialist investigation in progress.\nTrace ID  : trc-historical02",
-      "amount_inr": 42000.0,
+      "description": "Refund of Rs.35000 for Diamond Stud Earrings (ORD-20002) exceeds auto-refund threshold. Specialist review in progress.",
+      "amount_inr": 35000.0,
       "trace_id": "trc-historical02",
-      "created_at": "2026-05-17T14:34:07.089321+00:00"
+      "created_at": "2026-05-15T11:30:00Z"
+    },
+    {
+      "case_id": "CASE-DMG003",
+      "customer_id": "CUST-004",
+      "order_id": "ORD-40001",
+      "status": "in_progress",
+      "priority": "high",
+      "description": "Customer reported damaged LG OLED TV (Rs.130000) on delivery for ORD-40001. High-priority specialist investigation.",
+      "amount_inr": 130000.0,
+      "trace_id": "trc-historical03",
+      "created_at": "2026-05-13T09:15:00Z"
+    },
+    {
+      "case_id": "CASE-ADR004",
+      "customer_id": "CUST-003",
+      "order_id": "ORD-30002",
+      "status": "resolved",
+      "priority": "low",
+      "description": "Address update request for delivered COD order ORD-30002. Resolved — no change applied post-delivery.",
+      "amount_inr": null,
+      "trace_id": "trc-historical04",
+      "created_at": "2026-05-15T14:00:00Z"
     }
   ]
 }

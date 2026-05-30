@@ -2,42 +2,35 @@
   "articles": [
     {
       "article_id": "KB-001",
-      "title": "Refund Policy and Threshold Rules",
+      "title": "Refund Policy and Auto-Refund Threshold",
       "tags": [
         "refund",
         "threshold",
         "payments",
         "escalation",
-        "return"
+        "limit"
       ],
-      "content": "Acme Retail processes refunds automatically for amounts up to Rs.25,000 via the Payments Gateway. Refund requests exceeding Rs.25,000 must be escalated to a human specialist via the CRM. The specialist team has a 24-hour response SLA. Customers must raise refund requests within 30 days of delivery. The boundary is strictly greater than Rs.25,000 — orders of exactly Rs.25,000 are eligible for auto-refund.",
-      "last_updated": "2026-04-01",
+      "content": "Acme Retail processes refunds automatically for amounts up to Rs.25,000 via the Payments Gateway. Refund requests strictly greater than Rs.25,000 must be escalated to a human specialist via the CRM; an order of exactly Rs.25,000 is still auto-refunded. Damaged or defective items are eligible for a full refund regardless of value, subject to specialist approval above the threshold.",
+      "last_updated": "2026-04-15",
       "applies_to": [
         "electronics",
         "apparel",
-        "home_goods"
+        "footwear",
+        "furniture",
+        "home_goods",
+        "kitchen",
+        "stationery",
+        "hardware",
+        "beauty",
+        "books",
+        "sports",
+        "toys",
+        "jewelry",
+        "misc"
       ]
     },
     {
       "article_id": "KB-002",
-      "title": "Return Window Policy",
-      "tags": [
-        "return",
-        "window",
-        "policy",
-        "days",
-        "eligible"
-      ],
-      "content": "Customers may return items within 30 days of delivery. Electronics are eligible for return within 7 days. Items must be unused and in original packaging. For orders in 'placed' or 'processing' status, use the cancellation flow instead. For shipped or delivered orders, a return/pickup will be arranged.",
-      "last_updated": "2026-03-15",
-      "applies_to": [
-        "electronics",
-        "apparel",
-        "home_goods"
-      ]
-    },
-    {
-      "article_id": "KB-003",
       "title": "Escalation SLA and Specialist Response Times",
       "tags": [
         "escalation",
@@ -46,12 +39,52 @@
         "response",
         "24-hour"
       ],
-      "content": "Escalated cases are assigned to a specialist within 2 hours. Specialists respond within 24 hours. High-priority cases (above Rs.25,000, damaged goods, fraud, or legal action) are handled first. Customers will receive an email confirmation once a case is opened.",
-      "last_updated": "2026-04-10",
+      "content": "Escalated cases are assigned to a specialist within 2 hours, who responds within 24 hours. High-priority cases (above Rs.25,000, damaged goods, fraud, or legal action) are handled first. Customers receive an email confirmation once a case is opened.",
+      "last_updated": "2026-04-15",
       "applies_to": [
         "electronics",
         "apparel",
-        "home_goods"
+        "footwear",
+        "furniture",
+        "home_goods",
+        "kitchen",
+        "stationery",
+        "hardware",
+        "beauty",
+        "books",
+        "sports",
+        "toys",
+        "jewelry",
+        "misc"
+      ]
+    },
+    {
+      "article_id": "KB-003",
+      "title": "Fraud and Unauthorized Orders",
+      "tags": [
+        "fraud",
+        "unauthorized",
+        "security",
+        "account",
+        "escalation"
+      ],
+      "content": "If a customer reports an order they did not place, or suspects their account was accessed without authorization, this is a high-priority security escalation. The agent must (1) create a CRM escalation case with priority HIGH, (2) take NO other action on the order (no cancellation, no refund), (3) advise the customer to change their password immediately, and (4) state that the security team will respond within 24 hours.",
+      "last_updated": "2026-04-15",
+      "applies_to": [
+        "electronics",
+        "apparel",
+        "footwear",
+        "furniture",
+        "home_goods",
+        "kitchen",
+        "stationery",
+        "hardware",
+        "beauty",
+        "books",
+        "sports",
+        "toys",
+        "jewelry",
+        "misc"
       ]
     },
     {
@@ -61,16 +94,26 @@
         "cancel",
         "cancellation",
         "partial",
-        "reship",
         "address",
         "update"
       ],
-      "content": "Customers may cancel individual line items from orders in 'placed' or 'processing' status. Shipped or delivered orders require a return request — cancellation is not possible once dispatched. Address updates are allowed only for orders not yet shipped (placed or processing). Once an order is shipped, the address cannot be changed.",
-      "last_updated": "2026-04-05",
+      "content": "Customers may cancel individual line items from orders in 'placed' or 'processing' status. Shipped or delivered orders require a return request — cancellation is not possible once dispatched. Address updates are allowed only for orders not yet shipped (placed or processing).",
+      "last_updated": "2026-04-15",
       "applies_to": [
         "electronics",
         "apparel",
-        "home_goods"
+        "footwear",
+        "furniture",
+        "home_goods",
+        "kitchen",
+        "stationery",
+        "hardware",
+        "beauty",
+        "books",
+        "sports",
+        "toys",
+        "jewelry",
+        "misc"
       ]
     },
     {
@@ -78,18 +121,29 @@
       "title": "Payment Methods and Refund Processing Times",
       "tags": [
         "payment",
-        "refund",
         "methods",
+        "refund",
         "sla",
-        "days",
-        "processing"
+        "processing",
+        "days"
       ],
-      "content": "Supported refund methods: HDFC Credit Card, ICICI Debit Card, SBI Net Banking, UPI (GPay, PhonePe, Paytm all map to UPI), and original payment method. Refunds reflect within 5 business days of initiation. COD orders cannot be refunded via cash — an electronic method must be provided.",
-      "last_updated": "2026-03-20",
+      "content": "Supported refund methods: HDFC Credit Card, ICICI Debit Card, SBI Net Banking, UPI (GPay, PhonePe, Paytm map to UPI), and original payment method. Refunds reflect within 5 business days of initiation.",
+      "last_updated": "2026-04-15",
       "applies_to": [
         "electronics",
         "apparel",
-        "home_goods"
+        "footwear",
+        "furniture",
+        "home_goods",
+        "kitchen",
+        "stationery",
+        "hardware",
+        "beauty",
+        "books",
+        "sports",
+        "toys",
+        "jewelry",
+        "misc"
       ]
     },
     {
@@ -102,30 +156,242 @@
         "refund",
         "electronic"
       ],
-      "content": "For Cash on Delivery orders that are cancelled before dispatch, no refund is needed as payment was never collected. For delivered COD orders being returned, the refund CANNOT be issued as cash. Customers must provide an electronic refund method: UPI (GPay, PhonePe, Paytm), HDFC Credit Card, ICICI Debit Card, or SBI Net Banking. Asking to refund 'the same way' or 'in cash' for a COD order is not accepted — the agent must prompt for a valid electronic method. High-value COD returns above Rs.25,000 follow the standard escalation path.",
+      "content": "COD orders cancelled before dispatch need no refund. For delivered COD returns, the refund CANNOT be issued as cash — the customer must provide an electronic method: UPI, HDFC Credit Card, ICICI Debit Card, or SBI Net Banking. High-value COD returns above Rs.25,000 follow the standard escalation path.",
       "last_updated": "2026-04-15",
       "applies_to": [
         "electronics",
         "apparel",
-        "home_goods"
+        "footwear",
+        "furniture",
+        "home_goods",
+        "kitchen",
+        "stationery",
+        "hardware",
+        "beauty",
+        "books",
+        "sports",
+        "toys",
+        "jewelry",
+        "misc"
       ]
     },
     {
       "article_id": "KB-007",
-      "title": "Fraud and Unauthorized Orders",
+      "title": "Return Policy - Electronics",
       "tags": [
-        "fraud",
-        "unauthorized",
-        "security",
-        "account",
-        "escalation"
-      ],
-      "content": "If a customer reports an order they did not place, or suspects their account has been accessed without authorization, this is treated as a high-priority security escalation. The agent must: (1) create a CRM escalation case with priority HIGH, (2) NOT take any other action on the order (no cancellation, no refund), (3) advise the customer to change their password immediately, and (4) inform them that the security team will respond within 24 hours. Phrases like 'I never placed this', 'I did not order this', 'someone else ordered this', or 'my account was hacked' all trigger this flow.",
-      "last_updated": "2026-04-20",
-      "applies_to": [
+        "return",
+        "window",
         "electronics",
+        "warranty",
+        "days"
+      ],
+      "content": "Electronics may be returned within 7 days of delivery if unopened or defective; sealed-box items must be unused. Manufacturer warranty (typically 1 year) applies separately. Dead-on-arrival units get a free replacement within 48 hours.",
+      "last_updated": "2026-04-15",
+      "applies_to": [
+        "electronics"
+      ]
+    },
+    {
+      "article_id": "KB-008",
+      "title": "Return Policy - Apparel",
+      "tags": [
+        "return",
+        "window",
         "apparel",
+        "exchange",
+        "days"
+      ],
+      "content": "Apparel may be returned or exchanged within 30 days of delivery. Tags must be intact and the item unworn and unwashed. One free size exchange is allowed per order.",
+      "last_updated": "2026-04-15",
+      "applies_to": [
+        "apparel"
+      ]
+    },
+    {
+      "article_id": "KB-009",
+      "title": "Return Policy - Footwear",
+      "tags": [
+        "return",
+        "window",
+        "footwear",
+        "days"
+      ],
+      "content": "Footwear may be returned within 14 days of delivery. Shoes must be unworn with the original box and clean soles. No returns once the footwear has been used outdoors.",
+      "last_updated": "2026-04-15",
+      "applies_to": [
+        "footwear"
+      ]
+    },
+    {
+      "article_id": "KB-010",
+      "title": "Return Policy - Furniture",
+      "tags": [
+        "return",
+        "window",
+        "furniture",
+        "assembly",
+        "days"
+      ],
+      "content": "Furniture may be returned within 10 days of delivery. Inspect at delivery and report transit damage within 48 hours. Assembly issues are handled by a technician visit; bulky-item return pickup and de-installation are arranged by the team.",
+      "last_updated": "2026-04-15",
+      "applies_to": [
+        "furniture"
+      ]
+    },
+    {
+      "article_id": "KB-011",
+      "title": "Return Policy - Home Appliances",
+      "tags": [
+        "return",
+        "window",
+        "home_goods",
+        "appliance",
+        "days"
+      ],
+      "content": "Home appliances may be returned within 10 days of delivery. A demonstration or installation check is required before return approval. Manufacturer warranty applies separately.",
+      "last_updated": "2026-04-15",
+      "applies_to": [
         "home_goods"
+      ]
+    },
+    {
+      "article_id": "KB-012",
+      "title": "Return Policy - Kitchen",
+      "tags": [
+        "return",
+        "window",
+        "kitchen",
+        "days"
+      ],
+      "content": "Kitchen products may be returned within 14 days of delivery if unused and in original packaging. Electrical kitchen appliances carry a manufacturer warranty.",
+      "last_updated": "2026-04-15",
+      "applies_to": [
+        "kitchen"
+      ]
+    },
+    {
+      "article_id": "KB-013",
+      "title": "Return Policy - Stationery",
+      "tags": [
+        "return",
+        "window",
+        "stationery",
+        "days"
+      ],
+      "content": "Stationery may be returned within 7 days of delivery if unopened and unused. Personalised or custom-printed stationery is non-returnable.",
+      "last_updated": "2026-04-15",
+      "applies_to": [
+        "stationery"
+      ]
+    },
+    {
+      "article_id": "KB-014",
+      "title": "Return Policy - Hardware and Tools",
+      "tags": [
+        "return",
+        "window",
+        "hardware",
+        "tools",
+        "days"
+      ],
+      "content": "Hardware and tools may be returned within 14 days of delivery if unused and with safety seals intact. Paints, once opened or tinted, are non-returnable.",
+      "last_updated": "2026-04-15",
+      "applies_to": [
+        "hardware"
+      ]
+    },
+    {
+      "article_id": "KB-015",
+      "title": "Return Policy - Beauty and Personal Care",
+      "tags": [
+        "return",
+        "beauty",
+        "hygiene",
+        "non-returnable"
+      ],
+      "content": "For hygiene reasons, beauty and personal-care products are NON-RETURNABLE once opened. Sealed, unopened items may be returned within 7 days; damaged or wrong items receive a full refund or replacement.",
+      "last_updated": "2026-04-15",
+      "applies_to": [
+        "beauty"
+      ]
+    },
+    {
+      "article_id": "KB-016",
+      "title": "Return Policy - Books",
+      "tags": [
+        "return",
+        "window",
+        "books",
+        "days"
+      ],
+      "content": "Books may be returned within 7 days of delivery if unmarked and undamaged. E-books and digital downloads are non-returnable.",
+      "last_updated": "2026-04-15",
+      "applies_to": [
+        "books"
+      ]
+    },
+    {
+      "article_id": "KB-017",
+      "title": "Return Policy - Sports and Fitness",
+      "tags": [
+        "return",
+        "window",
+        "sports",
+        "fitness",
+        "days"
+      ],
+      "content": "Sports and fitness equipment may be returned within 14 days of delivery if unused. Large equipment such as treadmills requires an inspection before pickup.",
+      "last_updated": "2026-04-15",
+      "applies_to": [
+        "sports"
+      ]
+    },
+    {
+      "article_id": "KB-018",
+      "title": "Return Policy - Toys",
+      "tags": [
+        "return",
+        "window",
+        "toys",
+        "safety",
+        "days"
+      ],
+      "content": "Toys may be returned within 30 days of delivery if unopened, for child-safety reasons. Opened electronic toys are returnable only if defective.",
+      "last_updated": "2026-04-15",
+      "applies_to": [
+        "toys"
+      ]
+    },
+    {
+      "article_id": "KB-019",
+      "title": "Return Policy - Jewelry",
+      "tags": [
+        "return",
+        "window",
+        "jewelry",
+        "hallmark",
+        "days"
+      ],
+      "content": "Jewelry may be returned within 15 days of delivery with the tamper-proof seal intact and the original certificate or BIS hallmark. Customised or engraved jewelry is non-returnable. High-value jewelry returns above Rs.25,000 follow the specialist escalation path.",
+      "last_updated": "2026-04-15",
+      "applies_to": [
+        "jewelry"
+      ]
+    },
+    {
+      "article_id": "KB-020",
+      "title": "Return Policy - General (Default)",
+      "tags": [
+        "return",
+        "window",
+        "misc",
+        "default",
+        "days"
+      ],
+      "content": "Items without a category-specific policy may be returned within 7 days of delivery if unused and in original condition. Contact support for case-by-case handling.",
+      "last_updated": "2026-04-15",
+      "applies_to": [
+        "misc"
       ]
     }
   ]

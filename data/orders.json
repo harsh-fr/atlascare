@@ -4,7 +4,7 @@
       "order_id": "ORD-10001",
       "customer_id": "CUST-001",
       "status": "placed",
-      "created_at": "2026-05-26T14:34:07.089321+00:00",
+      "created_at": "2026-05-26T14:34:07Z",
       "estimated_delivery": "2026-06-02",
       "tracking_number": null,
       "shipping_address": {
@@ -16,38 +16,30 @@
       "items": [
         {
           "line_id": 1,
-          "product_id": "PROD-BOOK-101",
-          "name": "Python Crash Course Book",
+          "product_id": "PROD-ELEC-001",
+          "name": "Dell XPS 15 Laptop",
           "quantity": 1,
-          "unit_price": 750.0,
+          "unit_price": 95000.0,
           "status": "active"
         },
         {
           "line_id": 2,
-          "product_id": "PROD-HUB-022",
-          "name": "USB-C 7-in-1 Hub",
+          "product_id": "PROD-STAT-001",
+          "name": "Classmate Spiral Notebook Pack",
           "quantity": 1,
-          "unit_price": 1500.0,
-          "status": "active"
-        },
-        {
-          "line_id": 3,
-          "product_id": "PROD-DESK-009",
-          "name": "Bamboo Desk Organizer",
-          "quantity": 1,
-          "unit_price": 1000.0,
+          "unit_price": 450.0,
           "status": "active"
         }
       ],
-      "total_amount": 3250.0,
+      "total_amount": 95450.0,
       "payment_method": "UPI"
     },
     {
       "order_id": "ORD-10002",
       "customer_id": "CUST-001",
       "status": "processing",
-      "created_at": "2026-05-23T14:34:07.089321+00:00",
-      "estimated_delivery": "2026-05-30",
+      "created_at": "2026-05-24T09:10:00Z",
+      "estimated_delivery": "2026-05-31",
       "tracking_number": null,
       "shipping_address": {
         "line1": "12 MG Road, Koramangala",
@@ -58,38 +50,56 @@
       "items": [
         {
           "line_id": 1,
-          "product_id": "PROD-WM-007",
-          "name": "Bosch Front Load Washing Machine",
+          "product_id": "PROD-APP-001",
+          "name": "Cotton Kurta Blue",
           "quantity": 1,
-          "unit_price": 18000.0,
+          "unit_price": 1200.0,
           "status": "active"
         },
         {
           "line_id": 2,
-          "product_id": "PROD-WM-STAND-001",
-          "name": "Machine Installation Stand",
+          "product_id": "PROD-APP-002",
+          "name": "Cotton Kurta Green",
           "quantity": 1,
-          "unit_price": 500.0,
-          "status": "active"
-        },
-        {
-          "line_id": 3,
-          "product_id": "PROD-LAUNDRY-003",
-          "name": "Laundry Mesh Bag",
-          "quantity": 1,
-          "unit_price": 200.0,
+          "unit_price": 1200.0,
           "status": "active"
         }
       ],
-      "total_amount": 18500.0,
+      "total_amount": 2400.0,
       "payment_method": "HDFC_CREDIT"
     },
     {
       "order_id": "ORD-10003",
       "customer_id": "CUST-001",
       "status": "shipped",
-      "created_at": "2026-05-19T14:34:07.089321+00:00",
-      "estimated_delivery": "2026-05-28",
+      "created_at": "2026-05-20T11:00:00Z",
+      "estimated_delivery": "2026-05-29",
+      "tracking_number": "TRACK-7X9K2M",
+      "shipping_address": {
+        "line1": "4th Floor, Prestige Tower, ORR",
+        "city": "Bengaluru",
+        "state": "Karnataka",
+        "pincode": "560103"
+      },
+      "items": [
+        {
+          "line_id": 1,
+          "product_id": "PROD-FOOT-001",
+          "name": "Nike Air Max Sneakers",
+          "quantity": 1,
+          "unit_price": 9000.0,
+          "status": "active"
+        }
+      ],
+      "total_amount": 9000.0,
+      "payment_method": "COD"
+    },
+    {
+      "order_id": "ORD-10004",
+      "customer_id": "CUST-001",
+      "status": "delivered",
+      "created_at": "2026-05-10T08:00:00Z",
+      "estimated_delivery": "2026-05-15",
       "tracking_number": "TRACK-A1B2C3",
       "shipping_address": {
         "line1": "12 MG Road, Koramangala",
@@ -100,49 +110,23 @@
       "items": [
         {
           "line_id": 1,
-          "product_id": "PROD-SHOE-042",
-          "name": "Nike Air Force 1 Sneakers",
+          "product_id": "PROD-ELEC-004",
+          "name": "Sony WH-1000XM5 Headphones",
           "quantity": 1,
-          "unit_price": 8999.0,
+          "unit_price": 28000.0,
           "status": "active"
         }
       ],
-      "total_amount": 8999.0,
-      "payment_method": "ICICI_DEBIT"
-    },
-    {
-      "order_id": "ORD-10004",
-      "customer_id": "CUST-001",
-      "status": "delivered",
-      "created_at": "2026-05-12T14:34:07.089321+00:00",
-      "estimated_delivery": "2026-05-19",
-      "tracking_number": "TRACK-D4E5F6",
-      "shipping_address": {
-        "line1": "12 MG Road, Koramangala",
-        "city": "Bengaluru",
-        "state": "Karnataka",
-        "pincode": "560034"
-      },
-      "items": [
-        {
-          "line_id": 1,
-          "product_id": "PROD-AP-011",
-          "name": "Dyson Hot+Cool Air Purifier",
-          "quantity": 1,
-          "unit_price": 12000.0,
-          "status": "active"
-        }
-      ],
-      "total_amount": 12000.0,
+      "total_amount": 28000.0,
       "payment_method": "HDFC_CREDIT"
     },
     {
       "order_id": "ORD-10005",
       "customer_id": "CUST-001",
       "status": "delivered",
-      "created_at": "2026-05-05T14:34:07.089321+00:00",
-      "estimated_delivery": "2026-05-13",
-      "tracking_number": "TRACK-G7H8I9",
+      "created_at": "2026-05-12T08:00:00Z",
+      "estimated_delivery": "2026-05-17",
+      "tracking_number": "TRACK-BEAU01",
       "shipping_address": {
         "line1": "12 MG Road, Koramangala",
         "city": "Bengaluru",
@@ -152,167 +136,23 @@
       "items": [
         {
           "line_id": 1,
-          "product_id": "PROD-WATCH-009",
-          "name": "Apple Watch Series 9 (45mm)",
+          "product_id": "PROD-BEAU-001",
+          "name": "Chanel No.5 Perfume",
           "quantity": 1,
-          "unit_price": 24999.0,
+          "unit_price": 12000.0,
           "status": "active"
         }
       ],
-      "total_amount": 24999.0,
+      "total_amount": 12000.0,
       "payment_method": "UPI"
-    },
-    {
-      "order_id": "ORD-10010",
-      "customer_id": "CUST-001",
-      "status": "processing",
-      "created_at": "2026-05-25T14:34:07.089321+00:00",
-      "estimated_delivery": "2026-05-31",
-      "tracking_number": null,
-      "shipping_address": {
-        "line1": "12 MG Road, Koramangala",
-        "city": "Bengaluru",
-        "state": "Karnataka",
-        "pincode": "560034"
-      },
-      "items": [
-        {
-          "line_id": 1,
-          "product_id": "PROD-FAN-018",
-          "name": "Havells 1200mm Ceiling Fan",
-          "quantity": 1,
-          "unit_price": 2500.0,
-          "status": "active"
-        },
-        {
-          "line_id": 2,
-          "product_id": "PROD-IRON-005",
-          "name": "Philips EasySpeed Steam Iron",
-          "quantity": 1,
-          "unit_price": 1299.0,
-          "status": "active"
-        },
-        {
-          "line_id": 3,
-          "product_id": "PROD-STAB-002",
-          "name": "V-Guard Voltage Stabilizer",
-          "quantity": 1,
-          "unit_price": 3001.0,
-          "status": "active"
-        }
-      ],
-      "total_amount": 6800.0,
-      "payment_method": "COD"
-    },
-    {
-      "order_id": "ORD-10011",
-      "customer_id": "CUST-001",
-      "status": "delivered",
-      "created_at": "2026-05-08T14:34:07.089321+00:00",
-      "estimated_delivery": "2026-05-16",
-      "tracking_number": "TRACK-COD01",
-      "shipping_address": {
-        "line1": "12 MG Road, Koramangala",
-        "city": "Bengaluru",
-        "state": "Karnataka",
-        "pincode": "560034"
-      },
-      "items": [
-        {
-          "line_id": 1,
-          "product_id": "PROD-SHOE-043",
-          "name": "Nike Air Max 270",
-          "quantity": 1,
-          "unit_price": 8999.0,
-          "status": "active"
-        }
-      ],
-      "total_amount": 8999.0,
-      "payment_method": "COD"
-    },
-    {
-      "order_id": "ORD-10012",
-      "customer_id": "CUST-001",
-      "status": "shipped",
-      "created_at": "2026-05-22T14:34:07.089321+00:00",
-      "estimated_delivery": "2026-05-29",
-      "tracking_number": "TRACK-COD02",
-      "shipping_address": {
-        "line1": "12 MG Road, Koramangala",
-        "city": "Bengaluru",
-        "state": "Karnataka",
-        "pincode": "560034"
-      },
-      "items": [
-        {
-          "line_id": 1,
-          "product_id": "PROD-WATCH-002",
-          "name": "Fastrack Analog Watch",
-          "quantity": 1,
-          "unit_price": 2499.0,
-          "status": "active"
-        }
-      ],
-      "total_amount": 2499.0,
-      "payment_method": "COD"
-    },
-    {
-      "order_id": "ORD-10013",
-      "customer_id": "CUST-001",
-      "status": "placed",
-      "created_at": "2026-05-27T14:34:07.089321+00:00",
-      "estimated_delivery": "2026-06-03",
-      "tracking_number": null,
-      "shipping_address": {
-        "line1": "12 MG Road, Koramangala",
-        "city": "Bengaluru",
-        "state": "Karnataka",
-        "pincode": "560034"
-      },
-      "items": [
-        {
-          "line_id": 1,
-          "product_id": "PROD-KURTA-BL",
-          "name": "Cotton Kurta Blue",
-          "quantity": 1,
-          "unit_price": 899.0,
-          "status": "active"
-        },
-        {
-          "line_id": 2,
-          "product_id": "PROD-KURTA-GR",
-          "name": "Cotton Kurta Green",
-          "quantity": 1,
-          "unit_price": 899.0,
-          "status": "active"
-        },
-        {
-          "line_id": 3,
-          "product_id": "PROD-DUP-001",
-          "name": "Banarasi Dupatta",
-          "quantity": 1,
-          "unit_price": 1299.0,
-          "status": "active"
-        },
-        {
-          "line_id": 4,
-          "product_id": "PROD-JUTTI-001",
-          "name": "Kolhapuri Juttis",
-          "quantity": 1,
-          "unit_price": 1299.0,
-          "status": "active"
-        }
-      ],
-      "total_amount": 4396.0,
-      "payment_method": "COD"
     },
     {
       "order_id": "ORD-10006",
       "customer_id": "CUST-001",
-      "status": "delivered",
-      "created_at": "2026-04-22T14:34:07.089321+00:00",
-      "estimated_delivery": "2026-04-30",
-      "tracking_number": "TRACK-J0K1L2",
+      "status": "cancelled",
+      "created_at": "2026-05-08T08:00:00Z",
+      "estimated_delivery": "2026-05-14",
+      "tracking_number": null,
       "shipping_address": {
         "line1": "12 MG Road, Koramangala",
         "city": "Bengaluru",
@@ -322,153 +162,83 @@
       "items": [
         {
           "line_id": 1,
-          "product_id": "PROD-PHONE-031",
-          "name": "Samsung Galaxy S24 (256GB)",
+          "product_id": "PROD-TOY-001",
+          "name": "LEGO City Building Set",
           "quantity": 1,
-          "unit_price": 25000.0,
-          "status": "active"
+          "unit_price": 4500.0,
+          "status": "cancelled"
         }
       ],
-      "total_amount": 25000.0,
-      "payment_method": "HDFC_CREDIT"
+      "total_amount": 0.0,
+      "payment_method": "UPI"
     },
     {
       "order_id": "ORD-10007",
       "customer_id": "CUST-001",
       "status": "delivered",
-      "created_at": "2026-04-15T14:34:07.089321+00:00",
-      "estimated_delivery": "2026-04-23",
-      "tracking_number": "TRACK-M3N4O5",
+      "created_at": "2026-05-05T08:00:00Z",
+      "estimated_delivery": "2026-05-12",
+      "tracking_number": "TRACK-FURN07",
       "shipping_address": {
-        "line1": "12 MG Road, Koramangala",
+        "line1": "4th Floor, Prestige Tower, ORR",
         "city": "Bengaluru",
         "state": "Karnataka",
-        "pincode": "560034"
+        "pincode": "560103"
       },
       "items": [
         {
           "line_id": 1,
-          "product_id": "PROD-TAB-011",
-          "name": "iPad Pro 11-inch (M4)",
+          "product_id": "PROD-FURN-004",
+          "name": "3-Seater Fabric Sofa",
           "quantity": 1,
-          "unit_price": 25001.0,
+          "unit_price": 45000.0,
           "status": "active"
+        },
+        {
+          "line_id": 2,
+          "product_id": "PROD-HOME-005",
+          "name": "Philips Steam Iron",
+          "quantity": 1,
+          "unit_price": 1800.0,
+          "status": "cancelled"
         }
       ],
-      "total_amount": 25001.0,
-      "payment_method": "ICICI_DEBIT"
+      "total_amount": 45000.0,
+      "payment_method": "HDFC_CREDIT"
     },
     {
-      "order_id": "ORD-10008",
-      "customer_id": "CUST-001",
-      "status": "delivered",
-      "created_at": "2026-04-07T14:34:07.089321+00:00",
-      "estimated_delivery": "2026-04-15",
-      "tracking_number": "TRACK-P6Q7R8",
+      "order_id": "ORD-20001",
+      "customer_id": "CUST-002",
+      "status": "placed",
+      "created_at": "2026-05-25T10:00:00Z",
+      "estimated_delivery": "2026-06-01",
+      "tracking_number": null,
       "shipping_address": {
-        "line1": "12 MG Road, Koramangala",
-        "city": "Bengaluru",
-        "state": "Karnataka",
-        "pincode": "560034"
+        "line1": "Flat 3B, Sunshine Apartments, Bandra West",
+        "city": "Mumbai",
+        "state": "Maharashtra",
+        "pincode": "400050"
       },
       "items": [
         {
           "line_id": 1,
-          "product_id": "PROD-LAPTOP-XPS",
-          "name": "Dell XPS 13 Plus Laptop",
+          "product_id": "PROD-HOME-003",
+          "name": "Bosch Washing Machine",
           "quantity": 1,
           "unit_price": 42000.0,
           "status": "active"
         }
       ],
       "total_amount": 42000.0,
-      "payment_method": "HDFC_CREDIT"
-    },
-    {
-      "order_id": "ORD-10009",
-      "customer_id": "CUST-001",
-      "status": "cancelled",
-      "created_at": "2026-03-26T14:34:07.089321+00:00",
-      "estimated_delivery": "2026-04-05",
-      "tracking_number": null,
-      "shipping_address": {
-        "line1": "12 MG Road, Koramangala",
-        "city": "Bengaluru",
-        "state": "Karnataka",
-        "pincode": "560034"
-      },
-      "items": [
-        {
-          "line_id": 1,
-          "product_id": "PROD-CHAIR-007",
-          "name": "Ergonomic Mesh Office Chair",
-          "quantity": 1,
-          "unit_price": 18000.0,
-          "status": "cancelled"
-        }
-      ],
-      "total_amount": 0.0,
-      "payment_method": "SBI_NETBANKING"
-    },
-    {
-      "order_id": "ORD-10014",
-      "customer_id": "CUST-001",
-      "status": "delivered",
-      "created_at": "2026-02-24T14:34:07.089321+00:00",
-      "estimated_delivery": "2026-03-05",
-      "tracking_number": "TRACK-FEB01",
-      "shipping_address": {
-        "line1": "12 MG Road, Koramangala",
-        "city": "Bengaluru",
-        "state": "Karnataka",
-        "pincode": "560034"
-      },
-      "items": [
-        {
-          "line_id": 1,
-          "product_id": "PROD-LAPTOP-M3",
-          "name": "Apple MacBook Air M3 (16GB)",
-          "quantity": 1,
-          "unit_price": 55000.0,
-          "status": "active"
-        }
-      ],
-      "total_amount": 55000.0,
-      "payment_method": "HDFC_CREDIT"
-    },
-    {
-      "order_id": "ORD-20001",
-      "customer_id": "CUST-002",
-      "status": "processing",
-      "created_at": "2026-05-24T14:34:07.089321+00:00",
-      "estimated_delivery": "2026-05-31",
-      "tracking_number": null,
-      "shipping_address": {
-        "line1": "Flat 3B, Sunshine Apartments, Bandra West",
-        "city": "Mumbai",
-        "state": "Maharashtra",
-        "pincode": "400050"
-      },
-      "items": [
-        {
-          "line_id": 1,
-          "product_id": "PROD-HP-031",
-          "name": "Sony WH-1000XM5 Headphones",
-          "quantity": 1,
-          "unit_price": 29000.0,
-          "status": "active"
-        }
-      ],
-      "total_amount": 29000.0,
-      "payment_method": "UPI"
+      "payment_method": "COD"
     },
     {
       "order_id": "ORD-20002",
       "customer_id": "CUST-002",
-      "status": "shipped",
-      "created_at": "2026-05-21T14:34:07.089321+00:00",
-      "estimated_delivery": "2026-05-28",
-      "tracking_number": "TRACK-MUM01",
+      "status": "delivered",
+      "created_at": "2026-05-09T10:00:00Z",
+      "estimated_delivery": "2026-05-14",
+      "tracking_number": "TRACK-JEWL02",
       "shipping_address": {
         "line1": "Flat 3B, Sunshine Apartments, Bandra West",
         "city": "Mumbai",
@@ -478,136 +248,8 @@
       "items": [
         {
           "line_id": 1,
-          "product_id": "PROD-PERF-011",
-          "name": "Chanel No.5 Perfume 100ml",
-          "quantity": 2,
-          "unit_price": 9500.0,
-          "status": "active"
-        }
-      ],
-      "total_amount": 19000.0,
-      "payment_method": "ICICI_DEBIT"
-    },
-    {
-      "order_id": "ORD-20003",
-      "customer_id": "CUST-002",
-      "status": "delivered",
-      "created_at": "2026-05-02T14:34:07.089321+00:00",
-      "estimated_delivery": "2026-05-10",
-      "tracking_number": "TRACK-MUM02",
-      "shipping_address": {
-        "line1": "Flat 3B, Sunshine Apartments, Bandra West",
-        "city": "Mumbai",
-        "state": "Maharashtra",
-        "pincode": "400050"
-      },
-      "items": [
-        {
-          "line_id": 1,
-          "product_id": "PROD-TV-065",
-          "name": "Sony Bravia 65-inch OLED TV",
-          "quantity": 1,
-          "unit_price": 82000.0,
-          "status": "active"
-        }
-      ],
-      "total_amount": 82000.0,
-      "payment_method": "COD"
-    },
-    {
-      "order_id": "ORD-30001",
-      "customer_id": "CUST-003",
-      "status": "delivered",
-      "created_at": "2026-04-27T14:34:07.089321+00:00",
-      "estimated_delivery": "2026-05-05",
-      "tracking_number": "TRACK-CHN01",
-      "shipping_address": {
-        "line1": "22 Anna Salai, Teynampet",
-        "city": "Chennai",
-        "state": "Tamil Nadu",
-        "pincode": "600018"
-      },
-      "items": [
-        {
-          "line_id": 1,
-          "product_id": "PROD-SAREE-055",
-          "name": "Kanjeevaram Silk Saree",
-          "quantity": 1,
-          "unit_price": 4500.0,
-          "status": "active"
-        }
-      ],
-      "total_amount": 4500.0,
-      "payment_method": "SBI_NETBANKING"
-    },
-    {
-      "order_id": "ORD-30002",
-      "customer_id": "CUST-003",
-      "status": "placed",
-      "created_at": "2026-05-27T14:34:07.089321+00:00",
-      "estimated_delivery": "2026-06-03",
-      "tracking_number": null,
-      "shipping_address": {
-        "line1": "22 Anna Salai, Teynampet",
-        "city": "Chennai",
-        "state": "Tamil Nadu",
-        "pincode": "600018"
-      },
-      "items": [
-        {
-          "line_id": 1,
-          "product_id": "PROD-KURTI-XL",
-          "name": "Ethnic Kurti (XL)",
-          "quantity": 1,
-          "unit_price": 1499.0,
-          "status": "active"
-        },
-        {
-          "line_id": 2,
-          "product_id": "PROD-PALAZZO-001",
-          "name": "Palazzo Pants",
-          "quantity": 1,
-          "unit_price": 999.0,
-          "status": "active"
-        },
-        {
-          "line_id": 3,
-          "product_id": "PROD-STOLE-001",
-          "name": "Silk Stole",
-          "quantity": 1,
-          "unit_price": 499.0,
-          "status": "active"
-        },
-        {
-          "line_id": 4,
-          "product_id": "PROD-ANKLET-001",
-          "name": "Oxidised Anklets",
-          "quantity": 1,
-          "unit_price": 399.0,
-          "status": "active"
-        }
-      ],
-      "total_amount": 3396.0,
-      "payment_method": "COD"
-    },
-    {
-      "order_id": "ORD-40001",
-      "customer_id": "CUST-004",
-      "status": "processing",
-      "created_at": "2026-05-25T14:34:07.089321+00:00",
-      "estimated_delivery": "2026-06-01",
-      "tracking_number": null,
-      "shipping_address": {
-        "line1": "B-45, Sector 62",
-        "city": "Noida",
-        "state": "Uttar Pradesh",
-        "pincode": "201301"
-      },
-      "items": [
-        {
-          "line_id": 1,
-          "product_id": "PROD-FRIDGE-002",
-          "name": "LG 260L Double Door Refrigerator",
+          "product_id": "PROD-JEWL-004",
+          "name": "Diamond Stud Earrings",
           "quantity": 1,
           "unit_price": 35000.0,
           "status": "active"
@@ -617,11 +259,267 @@
       "payment_method": "ICICI_DEBIT"
     },
     {
+      "order_id": "ORD-20003",
+      "customer_id": "CUST-002",
+      "status": "processing",
+      "created_at": "2026-05-23T10:00:00Z",
+      "estimated_delivery": "2026-05-30",
+      "tracking_number": null,
+      "shipping_address": {
+        "line1": "Flat 3B, Sunshine Apartments, Bandra West",
+        "city": "Mumbai",
+        "state": "Maharashtra",
+        "pincode": "400050"
+      },
+      "items": [
+        {
+          "line_id": 1,
+          "product_id": "PROD-KITCH-001",
+          "name": "Preethi Mixer Grinder",
+          "quantity": 1,
+          "unit_price": 4500.0,
+          "status": "active"
+        },
+        {
+          "line_id": 2,
+          "product_id": "PROD-KITCH-002",
+          "name": "Hawkins Pressure Cooker",
+          "quantity": 1,
+          "unit_price": 2200.0,
+          "status": "active"
+        }
+      ],
+      "total_amount": 6700.0,
+      "payment_method": "UPI"
+    },
+    {
+      "order_id": "ORD-20004",
+      "customer_id": "CUST-002",
+      "status": "shipped",
+      "created_at": "2026-05-21T10:00:00Z",
+      "estimated_delivery": "2026-05-28",
+      "tracking_number": "TRACK-BOOK04",
+      "shipping_address": {
+        "line1": "Flat 3B, Sunshine Apartments, Bandra West",
+        "city": "Mumbai",
+        "state": "Maharashtra",
+        "pincode": "400050"
+      },
+      "items": [
+        {
+          "line_id": 1,
+          "product_id": "PROD-BOOK-002",
+          "name": "Python Crash Course Textbook",
+          "quantity": 1,
+          "unit_price": 1800.0,
+          "status": "active"
+        },
+        {
+          "line_id": 2,
+          "product_id": "PROD-BOOK-003",
+          "name": "The Alchemist Novel",
+          "quantity": 1,
+          "unit_price": 350.0,
+          "status": "active"
+        }
+      ],
+      "total_amount": 2150.0,
+      "payment_method": "HDFC_CREDIT"
+    },
+    {
+      "order_id": "ORD-20005",
+      "customer_id": "CUST-002",
+      "status": "delivered",
+      "created_at": "2026-05-11T10:00:00Z",
+      "estimated_delivery": "2026-05-16",
+      "tracking_number": "TRACK-SPRT05",
+      "shipping_address": {
+        "line1": "Flat 3B, Sunshine Apartments, Bandra West",
+        "city": "Mumbai",
+        "state": "Maharashtra",
+        "pincode": "400050"
+      },
+      "items": [
+        {
+          "line_id": 1,
+          "product_id": "PROD-SPRT-001",
+          "name": "SG Cricket Bat",
+          "quantity": 1,
+          "unit_price": 3500.0,
+          "status": "active"
+        },
+        {
+          "line_id": 2,
+          "product_id": "PROD-SPRT-002",
+          "name": "Boldfit Yoga Mat",
+          "quantity": 1,
+          "unit_price": 800.0,
+          "status": "active"
+        }
+      ],
+      "total_amount": 4300.0,
+      "payment_method": "UPI"
+    },
+    {
+      "order_id": "ORD-30001",
+      "customer_id": "CUST-003",
+      "status": "placed",
+      "created_at": "2026-05-26T07:30:00Z",
+      "estimated_delivery": "2026-06-03",
+      "tracking_number": null,
+      "shipping_address": {
+        "line1": "22 Anna Salai, Teynampet",
+        "city": "Chennai",
+        "state": "Tamil Nadu",
+        "pincode": "600018"
+      },
+      "items": [
+        {
+          "line_id": 1,
+          "product_id": "PROD-HARD-001",
+          "name": "Bosch Cordless Drill Machine",
+          "quantity": 1,
+          "unit_price": 6500.0,
+          "status": "active"
+        },
+        {
+          "line_id": 2,
+          "product_id": "PROD-HARD-003",
+          "name": "Taparia Tool Kit",
+          "quantity": 1,
+          "unit_price": 2800.0,
+          "status": "active"
+        }
+      ],
+      "total_amount": 9300.0,
+      "payment_method": "UPI"
+    },
+    {
+      "order_id": "ORD-30002",
+      "customer_id": "CUST-003",
+      "status": "delivered",
+      "created_at": "2026-05-08T07:30:00Z",
+      "estimated_delivery": "2026-05-15",
+      "tracking_number": "TRACK-FURN30",
+      "shipping_address": {
+        "line1": "22 Anna Salai, Teynampet",
+        "city": "Chennai",
+        "state": "Tamil Nadu",
+        "pincode": "600018"
+      },
+      "items": [
+        {
+          "line_id": 1,
+          "product_id": "PROD-FURN-001",
+          "name": "Ergonomic Office Chair",
+          "quantity": 1,
+          "unit_price": 14000.0,
+          "status": "active"
+        }
+      ],
+      "total_amount": 14000.0,
+      "payment_method": "COD"
+    },
+    {
+      "order_id": "ORD-30003",
+      "customer_id": "CUST-003",
+      "status": "processing",
+      "created_at": "2026-05-24T07:30:00Z",
+      "estimated_delivery": "2026-05-31",
+      "tracking_number": null,
+      "shipping_address": {
+        "line1": "22 Anna Salai, Teynampet",
+        "city": "Chennai",
+        "state": "Tamil Nadu",
+        "pincode": "600018"
+      },
+      "items": [
+        {
+          "line_id": 1,
+          "product_id": "PROD-MISC-001",
+          "name": "Acme Gift Card",
+          "quantity": 1,
+          "unit_price": 2000.0,
+          "status": "active"
+        },
+        {
+          "line_id": 2,
+          "product_id": "PROD-MISC-002",
+          "name": "Surprise Mystery Box",
+          "quantity": 1,
+          "unit_price": 999.0,
+          "status": "active"
+        }
+      ],
+      "total_amount": 2999.0,
+      "payment_method": "ICICI_DEBIT"
+    },
+    {
+      "order_id": "ORD-30004",
+      "customer_id": "CUST-003",
+      "status": "delivered",
+      "created_at": "2026-05-10T07:30:00Z",
+      "estimated_delivery": "2026-05-15",
+      "tracking_number": "TRACK-MIX304",
+      "shipping_address": {
+        "line1": "22 Anna Salai, Teynampet",
+        "city": "Chennai",
+        "state": "Tamil Nadu",
+        "pincode": "600018"
+      },
+      "items": [
+        {
+          "line_id": 1,
+          "product_id": "PROD-APP-003",
+          "name": "Kanjeevaram Silk Saree",
+          "quantity": 1,
+          "unit_price": 8500.0,
+          "status": "active"
+        },
+        {
+          "line_id": 2,
+          "product_id": "PROD-FOOT-005",
+          "name": "Catwalk Block Heels",
+          "quantity": 1,
+          "unit_price": 2200.0,
+          "status": "active"
+        }
+      ],
+      "total_amount": 10700.0,
+      "payment_method": "UPI"
+    },
+    {
+      "order_id": "ORD-40001",
+      "customer_id": "CUST-004",
+      "status": "delivered",
+      "created_at": "2026-05-07T12:00:00Z",
+      "estimated_delivery": "2026-05-13",
+      "tracking_number": "TRACK-TV4001",
+      "shipping_address": {
+        "line1": "B-45, Sector 62",
+        "city": "Noida",
+        "state": "Uttar Pradesh",
+        "pincode": "201301"
+      },
+      "items": [
+        {
+          "line_id": 1,
+          "product_id": "PROD-ELEC-007",
+          "name": "LG 55-inch OLED TV",
+          "quantity": 1,
+          "unit_price": 130000.0,
+          "status": "active"
+        }
+      ],
+      "total_amount": 130000.0,
+      "payment_method": "HDFC_CREDIT"
+    },
+    {
       "order_id": "ORD-40002",
       "customer_id": "CUST-004",
       "status": "placed",
-      "created_at": "2026-05-27T14:34:07.089321+00:00",
-      "estimated_delivery": "2026-06-03",
+      "created_at": "2026-05-26T12:00:00Z",
+      "estimated_delivery": "2026-06-02",
       "tracking_number": null,
       "shipping_address": {
         "line1": "B-45, Sector 62",
@@ -632,23 +530,269 @@
       "items": [
         {
           "line_id": 1,
-          "product_id": "PROD-AC-018",
-          "name": "Daikin 1.5 Ton 5-Star AC",
+          "product_id": "PROD-HOME-004",
+          "name": "LG Refrigerator 260L",
           "quantity": 1,
-          "unit_price": 38000.0,
+          "unit_price": 28000.0,
           "status": "active"
         },
         {
           "line_id": 2,
-          "product_id": "PROD-COVER-009",
-          "name": "AC Dust Cover",
+          "product_id": "PROD-KITCH-003",
+          "name": "IFB Microwave Oven",
           "quantity": 1,
-          "unit_price": 500.0,
+          "unit_price": 11000.0,
           "status": "active"
         }
       ],
-      "total_amount": 38500.0,
-      "payment_method": "ICICI_DEBIT"
+      "total_amount": 39000.0,
+      "payment_method": "UPI"
+    },
+    {
+      "order_id": "ORD-40003",
+      "customer_id": "CUST-004",
+      "status": "shipped",
+      "created_at": "2026-05-22T12:00:00Z",
+      "estimated_delivery": "2026-05-29",
+      "tracking_number": "TRACK-APP403",
+      "shipping_address": {
+        "line1": "B-45, Sector 62",
+        "city": "Noida",
+        "state": "Uttar Pradesh",
+        "pincode": "201301"
+      },
+      "items": [
+        {
+          "line_id": 1,
+          "product_id": "PROD-APP-004",
+          "name": "Levis Slim Fit Jeans",
+          "quantity": 1,
+          "unit_price": 3200.0,
+          "status": "active"
+        },
+        {
+          "line_id": 2,
+          "product_id": "PROD-APP-005",
+          "name": "Graphic Print T-Shirt",
+          "quantity": 1,
+          "unit_price": 700.0,
+          "status": "active"
+        }
+      ],
+      "total_amount": 3900.0,
+      "payment_method": "COD"
+    },
+    {
+      "order_id": "ORD-40004",
+      "customer_id": "CUST-004",
+      "status": "delivered",
+      "created_at": "2026-05-12T12:00:00Z",
+      "estimated_delivery": "2026-05-17",
+      "tracking_number": "TRACK-BEAU40",
+      "shipping_address": {
+        "line1": "B-45, Sector 62",
+        "city": "Noida",
+        "state": "Uttar Pradesh",
+        "pincode": "201301"
+      },
+      "items": [
+        {
+          "line_id": 1,
+          "product_id": "PROD-BEAU-002",
+          "name": "Maybelline Lipstick",
+          "quantity": 1,
+          "unit_price": 650.0,
+          "status": "active"
+        },
+        {
+          "line_id": 2,
+          "product_id": "PROD-BEAU-003",
+          "name": "Olay Face Cream",
+          "quantity": 1,
+          "unit_price": 1100.0,
+          "status": "active"
+        },
+        {
+          "line_id": 3,
+          "product_id": "PROD-BEAU-005",
+          "name": "Minimalist Face Serum",
+          "quantity": 1,
+          "unit_price": 700.0,
+          "status": "active"
+        }
+      ],
+      "total_amount": 2450.0,
+      "payment_method": "UPI"
+    },
+    {
+      "order_id": "ORD-50001",
+      "customer_id": "CUST-005",
+      "status": "delivered",
+      "created_at": "2026-05-11T15:00:00Z",
+      "estimated_delivery": "2026-05-16",
+      "tracking_number": "TRACK-JEWL50",
+      "shipping_address": {
+        "line1": "17 Hauz Khas Village",
+        "city": "New Delhi",
+        "state": "Delhi",
+        "pincode": "110016"
+      },
+      "items": [
+        {
+          "line_id": 1,
+          "product_id": "PROD-JEWL-001",
+          "name": "Gold Plated Necklace Set",
+          "quantity": 1,
+          "unit_price": 8500.0,
+          "status": "active"
+        },
+        {
+          "line_id": 2,
+          "product_id": "PROD-JEWL-003",
+          "name": "Fastrack Analog Watch",
+          "quantity": 1,
+          "unit_price": 2800.0,
+          "status": "active"
+        }
+      ],
+      "total_amount": 11300.0,
+      "payment_method": "UPI"
+    },
+    {
+      "order_id": "ORD-50002",
+      "customer_id": "CUST-005",
+      "status": "processing",
+      "created_at": "2026-05-24T15:00:00Z",
+      "estimated_delivery": "2026-05-31",
+      "tracking_number": null,
+      "shipping_address": {
+        "line1": "17 Hauz Khas Village",
+        "city": "New Delhi",
+        "state": "Delhi",
+        "pincode": "110016"
+      },
+      "items": [
+        {
+          "line_id": 1,
+          "product_id": "PROD-STAT-002",
+          "name": "Parker Pen Gift Set",
+          "quantity": 1,
+          "unit_price": 2500.0,
+          "status": "active"
+        },
+        {
+          "line_id": 2,
+          "product_id": "PROD-STAT-005",
+          "name": "2026 Leather Planner",
+          "quantity": 1,
+          "unit_price": 800.0,
+          "status": "active"
+        },
+        {
+          "line_id": 3,
+          "product_id": "PROD-STAT-003",
+          "name": "3M Sticky Notes Bundle",
+          "quantity": 1,
+          "unit_price": 300.0,
+          "status": "active"
+        }
+      ],
+      "total_amount": 3600.0,
+      "payment_method": "HDFC_CREDIT"
+    },
+    {
+      "order_id": "ORD-50003",
+      "customer_id": "CUST-005",
+      "status": "delivered",
+      "created_at": "2026-05-10T15:00:00Z",
+      "estimated_delivery": "2026-05-15",
+      "tracking_number": "TRACK-TOY503",
+      "shipping_address": {
+        "line1": "17 Hauz Khas Village",
+        "city": "New Delhi",
+        "state": "Delhi",
+        "pincode": "110016"
+      },
+      "items": [
+        {
+          "line_id": 1,
+          "product_id": "PROD-TOY-002",
+          "name": "Monopoly Board Game",
+          "quantity": 1,
+          "unit_price": 1200.0,
+          "status": "active"
+        },
+        {
+          "line_id": 2,
+          "product_id": "PROD-TOY-004",
+          "name": "Teddy Bear Soft Toy",
+          "quantity": 1,
+          "unit_price": 900.0,
+          "status": "active"
+        }
+      ],
+      "total_amount": 2100.0,
+      "payment_method": "COD"
+    },
+    {
+      "order_id": "ORD-50004",
+      "customer_id": "CUST-005",
+      "status": "placed",
+      "created_at": "2026-05-27T15:00:00Z",
+      "estimated_delivery": "2026-06-03",
+      "tracking_number": null,
+      "shipping_address": {
+        "line1": "17 Hauz Khas Village",
+        "city": "New Delhi",
+        "state": "Delhi",
+        "pincode": "110016"
+      },
+      "items": [
+        {
+          "line_id": 1,
+          "product_id": "PROD-SPRT-003",
+          "name": "Adjustable Dumbbell Set",
+          "quantity": 1,
+          "unit_price": 5500.0,
+          "status": "active"
+        },
+        {
+          "line_id": 2,
+          "product_id": "PROD-SPRT-005",
+          "name": "Yonex Badminton Racket",
+          "quantity": 1,
+          "unit_price": 2400.0,
+          "status": "active"
+        }
+      ],
+      "total_amount": 7900.0,
+      "payment_method": "UPI"
+    },
+    {
+      "order_id": "ORD-50005",
+      "customer_id": "CUST-005",
+      "status": "delivered",
+      "created_at": "2026-05-09T15:00:00Z",
+      "estimated_delivery": "2026-05-14",
+      "tracking_number": "TRACK-WTCH50",
+      "shipping_address": {
+        "line1": "17 Hauz Khas Village",
+        "city": "New Delhi",
+        "state": "Delhi",
+        "pincode": "110016"
+      },
+      "items": [
+        {
+          "line_id": 1,
+          "product_id": "PROD-ELEC-006",
+          "name": "Apple Watch Series 9 Smartwatch",
+          "quantity": 1,
+          "unit_price": 41000.0,
+          "status": "active"
+        }
+      ],
+      "total_amount": 41000.0,
+      "payment_method": "UPI"
     }
   ]
 }

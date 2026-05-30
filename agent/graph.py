@@ -1459,12 +1459,14 @@ async def _handle_list_cases(args, customer_id, tracer):
     return {"cases": cases}, "success", False
 
 async def _handle_search_kb(args, customer_id, tracer):
-    articles = await _kb.search(tags=args.get("tags", []))
-    # If the planner scoped the lookup to a specific order, narrow the articles to
-    # that order's product category as well (tags AND category). Ownership-checked;
-    # silently skipped if the order isn't resolvable or the category map is absent.
+    tags = args.get("tags", [])
+    # If the planner scoped the lookup to a specific order, narrow the articles to that
+    # order's product category as well (tags AND category). Retrieve the full candidate
+    # set first so the category's article isn't lost to the top-N cut, then filter, then
+    # cap. Ownership-checked; silently skipped if the order isn't resolvable.
     oid = args.get("order_id")
     if oid:
+        articles = await _kb.search(tags=tags, max_results=_POLICY_CANDIDATE_LIMIT)
         try:
             order = await _fetch_owned_order(_clean_order_id(str(oid)), customer_id)
             articles = _filter_articles_by_category(
@@ -1472,6 +1474,9 @@ async def _handle_search_kb(args, customer_id, tracer):
             )
         except Exception:
             pass
+        articles = articles[:5]
+    else:
+        articles = await _kb.search(tags=tags)
     return {"articles": articles}, "success", False
 
 async def _handle_request_confirmation(args, customer_id, tracer):
@@ -1797,6 +1802,12 @@ async def pre_guardrail_node(state: AtlasCareState, config) -> dict:
     return {"guardrail_blocked": False}
 
 
+# Broad candidate cap for category-scoped policy retrieval: large enough to pull every
+# tag-matched article (the KB is small) so the category filter runs over the full set,
+# not just the tag-ranked top-N. Final results are truncated AFTER filtering.
+_POLICY_CANDIDATE_LIMIT = 50
+
+
 def _filter_articles_by_category(articles: list[dict], categories: list[str]) -> list[dict]:
     """Keep only articles whose `applies_to` intersects the product categories in
     context — so the graph selects policy by BOTH tag relevance and product
@@ -1851,14 +1862,20 @@ async def policy_grounding_node(state: AtlasCareState, config) -> dict:
         return {"policy_grounding": ""}
 
     categories = await _resolve_context_categories(state)
-    articles = await _kb.search(tags=tags)
+    # Retrieve the FULL tag-matched candidate set (there are only ~20 articles), THEN
+    # filter by category, THEN truncate — so a category's policy article (which may rank
+    # below the generic ones on tags alone, e.g. a 'return'-only beauty article) is never
+    # dropped by the top-N cut before the category filter can select it.
+    articles = await _kb.search(tags=tags, max_results=_POLICY_CANDIDATE_LIMIT)
     articles = _filter_articles_by_category(articles, categories)
     if not articles:
         return {"policy_grounding": ""}
 
+    # Top-4 (not 3): a complex multi-intent question — refund + return + cancel +
+    # shipping — needs enough room that no single topic is crowded out of grounding.
     blocks = [
         f"- {a.get('title', '').strip()}: {a.get('content', '').strip()}"
-        for a in articles[:3]
+        for a in articles[:4]
     ]
     scope = f" (product category: {', '.join(categories)})" if categories else ""
     grounding = (
