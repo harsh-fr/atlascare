@@ -635,6 +635,78 @@ class TestKbRanking:
         assert [a["article_id"] for a in picked] == ["KB-BEAUTY"]
 
 
+class TestPressureBatteryFixes:
+    """Regressions for the brutal-battery findings B11-B14."""
+
+    # --- B13: negative refund amount rejected; must NOT fire on order-id hyphens ---
+    def test_negative_refund_regex(self, patched_env):
+        from agent.graph import _NEGATIVE_REFUND_RE as rx
+        assert rx.search("refund me -5000 rupees")
+        assert rx.search("process a refund of -5000 for ORD-10004")
+        assert rx.search("refund minus 5000")
+        assert rx.search("please refund a negative 200")
+        # the dangerous false positive: an order-id hyphen / a range must NOT match
+        assert not rx.search("refund 800 for ORD-78323")
+        assert not rx.search("refund my order ORD-10001")
+        assert not rx.search("refund within 4-5 days")
+
+    def test_negative_refund_blocked_at_pre_guardrail(self, client):
+        body = _post(client, "Process a refund of -5000 rupees to my UPI for ORD-78321.")
+        assert _actions(body) == []                       # no model, no tools
+        assert "positive value" in body["response"].lower()
+
+    # --- B14: cash refund surfaces the menu deterministically ---
+    def test_cash_refund_regex(self, patched_env):
+        from agent.graph import _CASH_REFUND_RE as rx
+        assert rx.search("refund me in cash")
+        assert rx.search("give me the money back as cash")
+        assert rx.search("I want a cash refund")
+        assert rx.search("just cash in hand please")
+        assert not rx.search("I paid in cash, where is my order")   # not a refund-method ask
+        assert not rx.search("is there a cashback offer")
+
+    # --- B11: a pure confirmation renders the QUESTION, never a fabricated completion ---
+    def test_is_pure_confirmation_turn(self, patched_env):
+        from agent.graph import _is_pure_confirmation_turn as f
+        assert f([{"tool": "request_confirmation", "success": True}])
+        assert f([{"tool": "get_order", "success": True},
+                  {"tool": "request_confirmation", "success": True}])
+        # mixed turn (a real mutation also happened) is NOT pure → LLM narrates both
+        assert not f([{"tool": "cancel_item", "success": True},
+                      {"tool": "request_confirmation", "success": True}])
+        assert not f([{"tool": "get_order", "success": True}])
+
+    def test_pure_confirmation_renders_question_and_runs_evaluator(self, client):
+        body = _run(client, "Cancel the laptop on ORD-78321", [
+            make_tool_mock("request_confirmation", {
+                "action": "cancel_item",
+                "action_params": {"order_id": "ORD-78321", "line_id": 1},
+                "confirmation_message": "The Gaming Laptop costs ₹55,000. Are you sure you "
+                                        "want to cancel it?",
+            }),
+            make_approved_mock(),   # evaluator now RUNS on confirmation turns (not bypassed)
+        ])
+        resp = body["response"]
+        assert "Are you sure" in resp                       # the deterministic question
+        assert "cancelled" not in resp.lower()              # NOT a fabricated completion
+        assert "refund" not in resp.lower()
+        assert body["task_complete"] is False
+        assert "request_confirmation" in _actions(body)
+        assert "evaluate" in _actions(body)                 # evaluator was not bypassed (B11)
+
+    # --- B12: duplicate case creation in one turn is deduplicated ---
+    def test_duplicate_escalation_deduplicated(self, client):
+        body = _run(client, "My laptop on ORD-78321 is damaged, escalate and open a case.", [
+            make_multi_tool_mock([
+                ("escalate",        {"order_id": "ORD-78321", "reason": "damaged laptop"}),
+                ("create_crm_case", {"order_id": "ORD-78321", "reason": "damaged laptop",
+                                     "priority": "high"}),
+            ]),
+        ])
+        assert "deduplicated" in _statuses(body), "the 2nd case-creating call must be deduped"
+        assert _statuses(body).count("success") >= 1       # the first escalation still ran
+
+
 class TestProductCategoryDerivation:
     """Product->category and category->policies are DERIVED purely from the canonical
     files: the category vocab comes from kb_articles.applies_to, classification is a

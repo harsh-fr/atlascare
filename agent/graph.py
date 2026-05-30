@@ -1695,6 +1695,26 @@ _UNSUPPORTED_METHOD_HINTS = (
     "amex", "american express", "paypal", "visa", "mastercard", "master card",
     "rupay", "discover", "diners", "bitcoin", "crypto", "ethereum",
 )
+# A refund amount can never be <= 0. Catch an explicit negative amount in the message
+# so it's rejected INSTANTLY with a clear message, rather than after a slow planner
+# round-trip that the payment tool (_validate_amount) would reject anyway (B13).
+_NEGATIVE_REFUND_RE = re.compile(
+    r"\b(?:refund|reimburse|return|pay\s*back)\b[^.?!\n]{0,30}?"
+    # the minus must NOT be preceded by an alphanumeric, so the hyphen in an order id
+    # (ORD-78323) or a range (4-5 days) is never mistaken for a negative amount.
+    r"(?:(?<![A-Za-z0-9])-\s*\d{2,}|\b(?:minus|negative)\s+\d)",
+    re.IGNORECASE,
+)
+# "refund in/as cash", "cash refund", "cash in hand/back" — cash is never a valid refund
+# rail (COD or otherwise). Surface the menu deterministically instead of letting a weak
+# planner loop on it (B14). _REFUND_DEST_RE only matches "refund TO x", so this covers the
+# "in/as cash" phrasings it misses. Anchored to a refund verb to avoid "I paid in cash".
+_CASH_REFUND_RE = re.compile(
+    r"(?:\b(?:refund|reimburse|return|money\s+back|pay\s*back)\b[^.?!\n]{0,40}?"
+    r"\b(?:in|as|via|by|with)\s+cash\b)"
+    r"|\bcash\s+(?:refund|in\s+hand|back)\b",
+    re.IGNORECASE,
+)
 
 
 def _detect_unsupported_refund_method(message: str) -> str | None:
@@ -1763,6 +1783,38 @@ async def pre_guardrail_node(state: AtlasCareState, config) -> dict:
             "guardrail_blocked": True,
             "task_complete":     False,
             "final_response":    _unsupported_method_reply(named_bad, original_method),
+        }
+
+    # Negative refund amount → reject instantly (B13). A refund is never < 0.
+    if _NEGATIVE_REFUND_RE.search(raw):
+        logger.info("Negative refund amount requested — rejected at pre_guardrail.")
+        return {
+            "guardrail_blocked": True,
+            "task_complete":     False,
+            "final_response": (
+                "A refund amount has to be a positive value, so I'm not able to process a "
+                "negative refund. Could you confirm the amount you'd like refunded?"
+            ),
+        }
+
+    # Cash refund request → surface the supported menu deterministically (B14). Cash is
+    # never a refund rail; for a COD order this is the electronic-method prompt (KB-006).
+    if _CASH_REFUND_RE.search(raw):
+        original_method = "original"
+        history_ids = _extract_order_ids(" ".join(
+            m["content"] for m in state["messages"] if isinstance(m.get("content"), str)
+        ))
+        if history_ids:
+            try:
+                order = await _fetch_owned_order(history_ids[-1], state["customer_id"])
+                original_method = order.get("payment_method", "original")
+            except Exception:
+                pass
+        logger.info("Cash refund requested — surfacing supported-methods menu at pre_guardrail.")
+        return {
+            "guardrail_blocked": True,
+            "task_complete":     False,
+            "final_response":    _unsupported_method_reply("cash", original_method),
         }
 
     # Code-enforced safety backstop — takes precedence over everything. A
@@ -2059,12 +2111,31 @@ async def tool_executor_node(state: AtlasCareState, config) -> dict:
     tool_calls  = state["messages"][-1].get("tool_calls") or []
 
     tool_messages, summary = [], []
+    case_orders: dict[str, dict] = {}   # oid -> {data, escalated, case_id} for in-turn dedup
     for tc in tool_calls:
         name = tc["function"]["name"]
         try:
             args = json.loads(tc["function"]["arguments"])
         except json.JSONDecodeError:
             args = {}
+
+        # Dedup case creation within a turn: a weak planner sometimes calls BOTH escalate
+        # AND create_crm_case for the same order, producing two CRM cases. Re-use the first.
+        if name in {"escalate", "create_crm_case"} and args.get("order_id"):
+            _oid_key = _clean_order_id(str(args["order_id"]))
+            _prior = case_orders.get(_oid_key)
+            if _prior is not None:
+                tracer.record_tool_call(name, name, "deduplicated",
+                                        {"reused_case": _prior["case_id"]})
+                summary.append({
+                    "tool": name, "tool_call_id": tc["id"], "success": True,
+                    "data": _prior["data"], "error": "", "escalated": _prior["escalated"],
+                })
+                tool_messages.append({
+                    "role": "tool", "tool_call_id": tc["id"],
+                    "content": json.dumps(_prior["data"], default=str),
+                })
+                continue
 
         # Confirmation gating, enforced in code (not left to the model):
         #  - a confirmation staged for a LOW-value, unambiguous cancel is bypassed
@@ -2096,6 +2167,13 @@ async def tool_executor_node(state: AtlasCareState, config) -> dict:
             "role": "tool", "tool_call_id": tc["id"],
             "content": json.dumps(data, default=str),
         })
+        # Record a freshly-created case so a duplicate call this turn re-uses it (B12).
+        if name in {"escalate", "create_crm_case"} and status == "success" and args.get("order_id"):
+            _cid = data.get("case_id") or (data.get("case") or {}).get("case_id")
+            if _cid:
+                case_orders[_clean_order_id(str(args["order_id"]))] = {
+                    "data": data, "escalated": escalated, "case_id": _cid,
+                }
 
     new_pending = None
     for s in summary:
@@ -2164,6 +2242,24 @@ def _is_pure_escalation_turn(execution_summary: list[dict]) -> bool:
     return not other_action
 
 
+def _is_pure_confirmation_turn(execution_summary: list[dict]) -> bool:
+    """True when the turn staged a confirmation and committed NO other mutation — so the
+    confirmation QUESTION is the entire reply and must be rendered verbatim. A weak
+    responder model otherwise hallucinates a COMPLETED action ('I've cancelled it, refund
+    initiated') for an action that is only pending the customer's 'yes'. A MIXED turn (a
+    real cancel/refund AND a staged confirmation) returns False so the responder narrates
+    both, with the evaluator as the backstop against a false completion claim."""
+    staged = any(s.get("tool") == "request_confirmation" and s.get("success")
+                 for s in execution_summary)
+    if not staged:
+        return False
+    other_mutation = any(
+        s.get("success") and s.get("tool") in _MUTATING_TOOLS
+        for s in execution_summary
+    )
+    return not other_mutation
+
+
 async def responder_node(state: AtlasCareState, config) -> dict:
     """Generate the customer-facing response."""
     tracer: Tracer = config["configurable"]["tracer"]
@@ -2196,6 +2292,20 @@ async def responder_node(state: AtlasCareState, config) -> dict:
                 "We apologise for any inconvenience."
             ),
         }
+
+    # PURE confirmation staged (high-value/ambiguous action, NOTHING committed): present
+    # the confirmation question verbatim, deterministically — never via the LLM. A weak
+    # responder otherwise fabricates a COMPLETED action for something only pending 'yes'
+    # (the B11 bug). A mixed turn falls through so the LLM narrates the real action too.
+    if _is_pure_confirmation_turn(state["execution_summary"]):
+        msg = next(
+            (s["data"].get("confirmation_message")
+             for s in state["execution_summary"]
+             if s.get("tool") == "request_confirmation" and s.get("success")),
+            None,
+        )
+        if msg:
+            return {"final_response": msg}
 
     # No tools were called this turn: either a grounded policy answer (routed here
     # straight from policy_grounding), or the agent answered from conversation history.
@@ -2294,8 +2404,10 @@ async def evaluator_node(state: AtlasCareState, config) -> dict:
     if any(s.get("escalated") for s in state["execution_summary"]):
         return {"eval_approved": True}   # deterministic escalation response needs no check
     tools_called = {s["tool"] for s in state["execution_summary"]}
-    if "request_confirmation" in tools_called:
-        return {"eval_approved": True}   # confirmation prompt is self-verifying
+    # NB: confirmation turns are NOT bypassed here. The reply is rendered deterministically
+    # for a PURE confirmation (responder_node), but a MIXED turn (a real mutation + a staged
+    # confirmation) is LLM-written, so the evaluator must still judge it — it catches a
+    # responder that falsely claims a completed action while one is only pending (the B11 bug).
     # A single-order lookup just presents fetched data — bypass the quality LLM
     # unless the customer also asked for an action we should verify. (list_orders
     # / filter queries fall through to the _is_complex check below and ARE judged.)
