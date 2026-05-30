@@ -1,18 +1,3 @@
-"""
-admin_dashboard.py
-==================
-AtlasCare Admin Dashboard — KPIs, Traces, and Logs.
-
-Run on a separate port from the customer UI.
-Customer UI has NO access to this dashboard.
-
-Usage:
-    python admin_dashboard.py
-
-Runs on http://127.0.0.1:7861 by default.
-Customer Gradio UI runs on 7860.
-"""
-
 import os
 import json
 import base64
@@ -29,9 +14,6 @@ from repositories.audit_repository import AuditRepository
 
 load_dotenv()
 
-# ---------------------------------------------------------------------------
-# Config
-# ---------------------------------------------------------------------------
 ADMIN_PORT      = int(os.getenv("ADMIN_GRADIO_PORT", "7861"))
 ADMIN_HOST      = os.getenv("ADMIN_GRADIO_HOST", "127.0.0.1")
 API_PORT        = os.getenv("PORT", "8000")
@@ -41,31 +23,19 @@ CRM_PATH        = DATA_DIR / "crm_cases.json"
 REFUNDS_PATH    = DATA_DIR / "refunds.json"
 ORDERS_PATH     = DATA_DIR / "orders.json"
 
-# ---------------------------------------------------------------------------
-# Trace fetcher — polls the FastAPI /admin/traces endpoint
-# ---------------------------------------------------------------------------
-
 def get_traces() -> list[dict]:
-    """Fetch traces from the running FastAPI server."""
     try:
         resp = _requests.get(f"{API_BASE}/admin/traces", timeout=3)
         return resp.json() if resp.ok else []
     except Exception:
         return []
 
-
 def _fetch_kpis_from_api() -> dict | None:
-    """Fetch pre-computed KPIs from the FastAPI server."""
     try:
         resp = _requests.get(f"{API_BASE}/admin/kpis", timeout=3)
         return resp.json() if resp.ok else None
     except Exception:
         return None
-
-
-# ---------------------------------------------------------------------------
-# Data readers
-# ---------------------------------------------------------------------------
 
 def _read_json(path: Path) -> dict:
     try:
@@ -74,7 +44,6 @@ def _read_json(path: Path) -> dict:
     except Exception:
         pass
     return {}
-
 
 def _load_cases() -> list[dict]:
     return _read_json(CRM_PATH).get("cases", [])
@@ -87,16 +56,9 @@ def _load_refunds() -> list[dict]:
 def _load_orders() -> list[dict]:
     return _read_json(ORDERS_PATH).get("orders", [])
 
-
-# ---------------------------------------------------------------------------
-# KPI calculations
-# ---------------------------------------------------------------------------
-
 def _compute_kpis() -> dict:
-    # Traffic/latency KPIs come from the FastAPI trace store via API
     api_kpis = _fetch_kpis_from_api() or {}
 
-    # CRM/refund KPIs come from the JSON files (source of truth)
     cases   = _load_cases()
     refunds = _load_refunds()
     orders  = _load_orders()
@@ -124,11 +86,6 @@ def _compute_kpis() -> dict:
         "total_refund_inr":  f"₹{refund_amount:,.2f}",
         "total_orders":      len(orders),
     }
-
-
-# ---------------------------------------------------------------------------
-# Formatters
-# ---------------------------------------------------------------------------
 
 def _fmt_kpis() -> str:
     k = _compute_kpis()
@@ -361,11 +318,6 @@ def load_audit_table(customer_filter: str = "All", action_filter: str = "All") -
         return pd.DataFrame(columns=["Timestamp", "Customer", "Order ID", "Action", "Details", "Event ID"])
     return pd.DataFrame(rows).sort_values("Timestamp", ascending=False).reset_index(drop=True)
 
-
-# ---------------------------------------------------------------------------
-# Gradio UI
-# ---------------------------------------------------------------------------
-
 def refresh_all():
     return _fmt_kpis(), _fmt_traces(), _fmt_cases(), _fmt_refunds()
 
@@ -375,23 +327,21 @@ with gr.Blocks(title="AtlasCare Admin", theme=gr.themes.Soft()) as dashboard:
     gr.Markdown("# 🛡️ AtlasCare Admin Dashboard")
     gr.Markdown(
         "> **Internal use only.** This dashboard is not accessible to customers. "
-        "Run on a separate port (default 7861)."
+        "Run on a separate port."
     )
 
     with gr.Row():
         refresh_btn = gr.Button("🔄 Refresh All", variant="primary", scale=1)
         with gr.Column(scale=4):
-            gr.Markdown("Auto-refreshes when you click Refresh All.")
+            gr.Markdown("Click to Refresh.")
 
     with gr.Tabs():
 
-        # ── KPIs ──────────────────────────────────────────────────────────
         with gr.Tab("📊 KPIs"):
             kpi_display = gr.Markdown(_fmt_kpis())
 
-        # ── Traces ────────────────────────────────────────────────────────
         with gr.Tab("🔍 Traces"):
-            trace_limit = gr.Slider(5, 100, value=20, step=5, label="Show last N traces")
+            trace_limit = gr.Slider(5, 500, value=20, step=5, label="Show last N traces")
             trace_display = gr.Markdown(_fmt_traces())
 
             gr.Markdown("### Trace Detail")
@@ -420,15 +370,12 @@ with gr.Blocks(title="AtlasCare Admin", theme=gr.themes.Soft()) as dashboard:
                 outputs=trace_display,
             )
 
-        # ── CRM Cases ─────────────────────────────────────────────────────
         with gr.Tab("🗂️ CRM Cases"):
             cases_display = gr.Markdown(_fmt_cases())
 
-        # ── Refunds ───────────────────────────────────────────────────────
         with gr.Tab("💳 Refunds"):
             refunds_display = gr.Markdown(_fmt_refunds())
 
-        # ── Agent Graph ───────────────────────────────────────────────────
         with gr.Tab("🕸️ Agent Graph"):
             def _graph_html() -> str:
                 try:
@@ -480,7 +427,6 @@ with gr.Blocks(title="AtlasCare Admin", theme=gr.themes.Soft()) as dashboard:
             graph_display = gr.HTML(_graph_html())
             gr.Button("🔄 Refresh Graph").click(fn=_graph_html, outputs=graph_display)
 
-        # ── Orders ────────────────────────────────────────────────────────
         with gr.Tab("📦 Orders"):
             with gr.Row():
                 o_customer_dd = gr.Dropdown(
@@ -505,7 +451,6 @@ with gr.Blocks(title="AtlasCare Admin", theme=gr.themes.Soft()) as dashboard:
             o_status_dd.change(load_orders, [o_customer_dd, o_status_dd], o_table)
             o_refresh_btn.click(load_orders, [o_customer_dd, o_status_dd], o_table)
 
-        # ── Agent Audit Traces ─────────────────────────────────────────────
         with gr.Tab("🗒️ Audit Traces"):
             with gr.Row():
                 a_customer_dd = gr.Dropdown(
@@ -530,7 +475,6 @@ with gr.Blocks(title="AtlasCare Admin", theme=gr.themes.Soft()) as dashboard:
             a_action_dd.change(load_audit_table, [a_customer_dd, a_action_dd], a_table)
             a_refresh_btn.click(load_audit_table, [a_customer_dd, a_action_dd], a_table)
 
-        # ── Raw JSON viewer ───────────────────────────────────────────────
         with gr.Tab("📁 Raw Data"):
             file_choice = gr.Radio(
                 ["crm_cases.json", "refunds.json", "orders.json"],
@@ -557,7 +501,6 @@ with gr.Blocks(title="AtlasCare Admin", theme=gr.themes.Soft()) as dashboard:
                 outputs=raw_display,
             )
 
-    # Refresh all tabs
     refresh_btn.click(
         fn=refresh_all,
         outputs=[kpi_display, trace_display, cases_display, refunds_display],

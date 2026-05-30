@@ -1,28 +1,3 @@
-"""
-agent/guardrails.py
-===================
-Deterministic policy enforcement layer.
-
-Responsibility
---------------
-  Pre-check  : runs BEFORE the LLM sees the message.
-               Catches obvious policy violations early.
-  Post-check : runs AFTER tool execution completes.
-               Verifies no autonomous payment was made when it
-               shouldn't have been (e.g. escalation cases).
-
-Design principles
------------------
-- Every rule here is CODE, not a prompt instruction.
-  The LLM cannot override, reinterpret, or bypass these checks.
-- Rules are explicit, named, and independently testable.
-- GuardrailVerdict is immutable — callers read it, never mutate it.
-- The refund threshold (Rs.25,000) is sourced from an environment
-  variable with a hardcoded safe default, so it can be changed via
-  config without a code deploy.
-- Guardrails are intentionally conservative: when in doubt, block.
-"""
-
 import logging
 import os
 import re
@@ -33,39 +8,20 @@ from utils.payment_methods import DEFAULT_AUTO_REFUND_LIMIT_INR
 
 logger = logging.getLogger(__name__)
 
-# ---------------------------------------------------------------------------
-# Policy constants
-# ---------------------------------------------------------------------------
-
-# Rs.25,000 auto-refund threshold — single source of truth.
 def _resolve_auto_refund_limit() -> float:
-    """Resolve the auto-refund threshold so every enforcement layer agrees.
-
-    Precedence (mirrors PaymentTool._enforce_threshold):
-      1. ``auto_refund_limit_inr`` in payment_config.json — the data the
-         operator/evaluator supplies. This is what lets the threshold track
-         the deployed config WITHOUT a code change, so a swapped-in data
-         folder is honoured by the guardrail and the agent prompt alike.
-      2. ``AUTO_REFUND_LIMIT_INR`` env var — fallback when config is missing.
-      3. Rs.25,000 hardcoded safe default.
-
-    NEVER change the default without a compliance review.
-    """
     try:
         from repositories.payment_repository import PaymentRepository
 
         limit = PaymentRepository().get_config().get("auto_refund_limit_inr")
         if limit is not None:
             return float(limit)
-    except Exception as exc:  # pragma: no cover - defensive
+    except Exception as exc:
         logger.warning("auto_refund_limit_inr unavailable from payment_config: %s", exc)
     return float(os.getenv("AUTO_REFUND_LIMIT_INR", str(DEFAULT_AUTO_REFUND_LIMIT_INR)))
 
 
 AUTO_REFUND_LIMIT_INR: float = _resolve_auto_refund_limit()
 
-# Regex patterns for amount extraction from free text
-# Matches: ₹42,000 | Rs.42000 | Rs 42,000 | INR 42000
 _AMOUNT_PATTERNS = [
     # ₹42,000 | Rs.42000 | Rs 42,000 — proper alternation (the old
     # character-class form [₹Rs\.]+ matched stray 'R'/'s'/'.' and mis-extracted).
@@ -88,7 +44,6 @@ _REFUND_CONTEXT_AMOUNT_RE = re.compile(
     re.IGNORECASE,
 )
 
-# F-08: worded-amount lookup table for common Indian denominations
 # Maps normalised word tokens → float multiplier
 _WORD_AMOUNT_UNITS: dict[str, float] = {
     "hundred": 100.0,
@@ -108,20 +63,14 @@ _WORD_DIGITS: dict[str, float] = {
 }
 
 def _parse_worded_amount(text: str) -> list[float]:
-    """
-    Extract monetary amounts expressed in words, e.g.
-    'twenty-five thousand rupees'  → [25000.0]
-    'one lakh'                     → [100000.0]
-    Returns a list of floats (may be empty).
-    Only fires when a currency word is present nearby.
-    """
+
     lower = text.lower()
     # Only attempt if a currency indicator is nearby
     if not re.search(r'\b(rupees?|inr|rs\.?|₹)\b', lower):
         return []
 
     amounts: list[float] = []
-    # Tokenise: keep hyphens so "twenty-five" works
+    # Keep hyphens so "twenty-five" works
     tokens = re.findall(r'[a-z]+', lower)
     i = 0
     while i < len(tokens):
@@ -154,14 +103,6 @@ def _parse_worded_amount(text: str) -> list[float]:
             i += 1
     return amounts
 
-
-# ---------------------------------------------------------------------------
-# High-severity safety / fraud / legal signals (code-enforced escalation)
-# ---------------------------------------------------------------------------
-# These must be handled by a specialist and must NEVER be resolved by an
-# autonomous refund/cancel. This is a CODE backstop for the escalation policy
-# that otherwise lives only in the agent prompt (and is bypassable by prompt
-# injection or model error). Intentionally conservative: when in doubt, escalate.
 _SAFETY_ESCALATION_PATTERNS: list[tuple[str, re.Pattern]] = [
     ("fraud_or_unauthorised", re.compile(
         r"\b(fraud(?:ulent)?|unauthor(?:ised|ized)"
@@ -188,26 +129,12 @@ _SAFETY_ESCALATION_PATTERNS: list[tuple[str, re.Pattern]] = [
 
 
 def detect_safety_escalation(message: str) -> str | None:
-    """
-    Return a category label if the message contains a high-severity safety,
-    fraud, or legal signal that must be escalated to a specialist and never
-    resolved autonomously. Returns None otherwise. Pure function, no side effects.
-    """
     if not message:
         return None
     for label, pattern in _SAFETY_ESCALATION_PATTERNS:
         if pattern.search(message):
             return label
     return None
-
-
-# ---------------------------------------------------------------------------
-# Sensitive-data redaction (compliance / PII hygiene)
-# ---------------------------------------------------------------------------
-# AtlasCare never needs a customer's card number, CVV, email, or phone to service
-# an order, so masking them in the customer's message before it reaches the LLM,
-# the conversation checkpointer, or the trace/audit logs is a safe PCI/PII control.
-# Deterministic — no model in the loop, so it cannot be prompted around.
 
 # Card: 13–19 digits, optionally separated by spaces or dashes. Luhn-validated below
 # so order totals / pincodes / order IDs are never mistaken for a card number.
