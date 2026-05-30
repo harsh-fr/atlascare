@@ -166,11 +166,8 @@ def _luhn_ok(digits: str) -> bool:
 
 
 def redact_sensitive(text: str) -> tuple[str, list[str]]:
-    """Mask card numbers, CVVs, emails, and phone numbers in `text`.
-
-    Returns (redacted_text, kinds_found) where kinds_found is the de-duplicated,
-    sorted list of categories that were masked (e.g. ['card', 'email']). Pure and
-    idempotent — re-running on already-redacted text is a no-op.
+    """
+    Mask card numbers, CVVs, emails, and phone numbers in `text`.
     """
     if not text:
         return text, []
@@ -186,7 +183,7 @@ def redact_sensitive(text: str) -> tuple[str, list[str]]:
         if 13 <= len(digits) <= 19 and _luhn_ok(digits):
             found.add("card")
             return "[REDACTED_CARD]"
-        return m.group()  # not a real card — leave untouched
+        return m.group()
 
     def _email(_m):
         found.add("email")
@@ -196,31 +193,14 @@ def redact_sensitive(text: str) -> tuple[str, list[str]]:
         found.add("phone")
         return "[REDACTED_PHONE]"
 
-    # CVV (context-anchored) and cards first, before digit runs are tokenised away.
     text = _CVV_RE.sub(_cvv, text)
     text = _CARD_RE.sub(_card, text)
     text = _EMAIL_RE.sub(_email, text)
     text = _PHONE_RE.sub(_phone, text)
     return text, sorted(found)
 
-
-# ---------------------------------------------------------------------------
-# Result contract
-# ---------------------------------------------------------------------------
 @dataclass(frozen=True)
 class GuardrailVerdict:
-    """
-    Immutable result of a guardrail check.
-
-    Attributes
-    ----------
-    blocked      : True  → Pipeline must halt and return user_message.
-                   False → pipeline continues.
-    reason       : internal audit label (never shown to user).
-    user_message : polite holding message shown to the customer when blocked.
-                   Empty string when blocked=False.
-    rule_id      : identifier of the rule that triggered (for trace/audit).
-    """
     blocked: bool
     reason: str = ""
     user_message: str = ""
@@ -244,21 +224,7 @@ class GuardrailVerdict:
             user_message=user_message,
         )
 
-
-# ---------------------------------------------------------------------------
-# Guardrails
-# ---------------------------------------------------------------------------
 class Guardrails:
-    """
-    Stateless policy enforcement.
-
-    All methods are pure functions of their inputs — no side effects,
-    no shared state, safe to call concurrently.
-    """
-
-    # ------------------------------------------------------------------
-    # Pre-execution check (called before LLM)
-    # ------------------------------------------------------------------
     def pre_check(
         self,
         message: str,
@@ -267,12 +233,6 @@ class Guardrails:
     ) -> GuardrailVerdict:
         """
         Run all pre-execution rules against the raw customer message.
-
-        Rules are evaluated in priority order; the first triggered rule
-        wins and short-circuits the rest.
-
-        Returns
-        -------
         GuardrailVerdict — blocked=False means pipeline may continue.
         """
         rules = [
@@ -299,9 +259,6 @@ class Guardrails:
 
         return GuardrailVerdict.allow()
 
-    # ------------------------------------------------------------------
-    # Post-execution check (called after tool execution)
-    # ------------------------------------------------------------------
     def post_check(
         self,
         execution_summary: list[dict],
@@ -429,9 +386,6 @@ class Guardrails:
             )
         return GuardrailVerdict.allow()
 
-    # ------------------------------------------------------------------
-    # Individual rules — post
-    # ------------------------------------------------------------------
     def _rule_no_over_limit_refund(
         self,
         execution_summary: list[dict],
@@ -482,10 +436,6 @@ class Guardrails:
                 )
         return GuardrailVerdict.allow()
 
-
-# ---------------------------------------------------------------------------
-# Helpers
-# ---------------------------------------------------------------------------
 def _extract_amounts(text: str) -> list[float]:
     """
     Extract all monetary amounts from free text, including worded forms.
@@ -499,7 +449,6 @@ def _extract_amounts(text: str) -> list[float]:
                 amounts.append(float(raw))
             except ValueError:
                 pass
-    # F-08: also catch worded amounts like "twenty-five thousand rupees"
     amounts.extend(_parse_worded_amount(text))
     return amounts
 
