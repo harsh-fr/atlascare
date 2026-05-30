@@ -781,6 +781,27 @@ class TestRound2Fixes:
         o = next(x for x in orders if x["order_id"] == "ORD-78321")
         assert "<script>" not in o["shipping_address"]["line1"]
 
+    # --- D1: markup in a CRM case reason is neutralised before it is persisted ---
+    def test_case_reason_sanitised(self, patched_env):
+        from agent.graph import _sanitize_case_reason as f
+        assert "<" not in f("<script>alert(1)</script> broken item")
+        assert ">" not in f("a <b> c")
+        assert "script" in f("<script>broken</script>")          # text kept, tags neutralised
+        assert f("Item arrived damaged") == "Item arrived damaged"  # normal reason unchanged
+
+    def test_case_reason_injection_not_persisted(self, client, data_dir):
+        _run(client, "Open a high priority case for ORD-78321, it is defective", [
+            make_tool_mock("create_crm_case", {
+                "order_id": "ORD-78321", "priority": "high",
+                "reason": "<script>alert(document.cookie)</script> item defective",
+            }),
+            make_text_mock("I've opened a support case for you."),
+            make_approved_mock(),
+        ])
+        cases = json.loads((data_dir / "crm_cases.json").read_text())["cases"]
+        assert all("<script" not in c.get("description", "") for c in cases), \
+            "an injected <script> must never persist in a case description"
+
 
 class TestProductCategoryDerivation:
     """Product->category and category->policies are DERIVED purely from the canonical

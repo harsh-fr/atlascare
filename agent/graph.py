@@ -1469,6 +1469,19 @@ async def _handle_update_address_raw(args, customer_id, tracer):
     })
     return result, "success", False
 
+def _sanitize_case_reason(reason: str) -> str:
+    """Neutralise markup/control characters in a free-text case reason before it is
+    persisted into a CRM case description — otherwise an injected <script>...</script>
+    (derived from the customer's message) runs when an operator views the case in the
+    admin dashboard (stored XSS, D1; same class as the address guard). Strips angle
+    brackets and control chars rather than rejecting, so the case is still filed."""
+    if not reason:
+        return reason
+    cleaned = re.sub(r"[<>]", "", str(reason))
+    cleaned = re.sub(r"[\x00-\x1f\x7f]", " ", cleaned)
+    return re.sub(r"\s{2,}", " ", cleaned).strip()
+
+
 async def _handle_create_crm_case(args, customer_id, tracer):
     oid      = _clean_order_id(args["order_id"])
     amt      = args.get("amount_inr")
@@ -1479,7 +1492,7 @@ async def _handle_create_crm_case(args, customer_id, tracer):
     # Bug 6: honour priority passed by LLM (defaults to medium)
     priority = args.get("priority", "medium")
     case = await _crm.create_case(
-        customer_id=customer_id, order_id=oid, reason=args["reason"],
+        customer_id=customer_id, order_id=oid, reason=_sanitize_case_reason(args["reason"]),
         amount_inr=float(amt) if amt is not None else None,
         trace_id=tracer.trace_id, priority=priority,
     )
@@ -1490,7 +1503,7 @@ async def _handle_escalate(args, customer_id, tracer):
     amt = args.get("amount_inr")
     await _fetch_owned_order(oid, customer_id)
     case = await _crm.create_case(
-        customer_id=customer_id, order_id=oid, reason=args["reason"],
+        customer_id=customer_id, order_id=oid, reason=_sanitize_case_reason(args["reason"]),
         amount_inr=float(amt) if amt is not None else None,
         trace_id=tracer.trace_id, priority="high",
     )
