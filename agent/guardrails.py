@@ -202,6 +202,82 @@ def detect_safety_escalation(message: str) -> str | None:
 
 
 # ---------------------------------------------------------------------------
+# Sensitive-data redaction (compliance / PII hygiene)
+# ---------------------------------------------------------------------------
+# AtlasCare never needs a customer's card number, CVV, email, or phone to service
+# an order, so masking them in the customer's message before it reaches the LLM,
+# the conversation checkpointer, or the trace/audit logs is a safe PCI/PII control.
+# Deterministic — no model in the loop, so it cannot be prompted around.
+
+# Card: 13–19 digits, optionally separated by spaces or dashes. Luhn-validated below
+# so order totals / pincodes / order IDs are never mistaken for a card number.
+_CARD_RE  = re.compile(r"\b\d(?:[ -]?\d){12,18}\b")
+# CVV: only when a context word makes it unambiguous (avoids masking any 3–4 digits).
+_CVV_RE   = re.compile(r"\b(?:cvv|cvc|cvv2|security\s*code)\b\s*[:#-]?\s*\d{3,4}\b",
+                       re.IGNORECASE)
+_EMAIL_RE = re.compile(r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b")
+# Indian mobile: optional +91, then a 10-digit number starting 6–9. The negative
+# look-arounds stop it matching inside a longer digit run.
+_PHONE_RE = re.compile(r"(?<!\d)(?:\+?91[\s-]?)?[6-9]\d{9}(?!\d)")
+
+
+def _luhn_ok(digits: str) -> bool:
+    """Luhn checksum — true for valid payment-card numbers. Keeps the card regex
+    from masking arbitrary long digit strings that aren't cards."""
+    total, alt = 0, False
+    for ch in reversed(digits):
+        if not ch.isdigit():
+            return False
+        d = ord(ch) - 48
+        if alt:
+            d *= 2
+            if d > 9:
+                d -= 9
+        total += d
+        alt = not alt
+    return total % 10 == 0
+
+
+def redact_sensitive(text: str) -> tuple[str, list[str]]:
+    """Mask card numbers, CVVs, emails, and phone numbers in `text`.
+
+    Returns (redacted_text, kinds_found) where kinds_found is the de-duplicated,
+    sorted list of categories that were masked (e.g. ['card', 'email']). Pure and
+    idempotent — re-running on already-redacted text is a no-op.
+    """
+    if not text:
+        return text, []
+
+    found: set[str] = set()
+
+    def _cvv(_m):
+        found.add("cvv")
+        return "[REDACTED_CVV]"
+
+    def _card(m):
+        digits = re.sub(r"\D", "", m.group())
+        if 13 <= len(digits) <= 19 and _luhn_ok(digits):
+            found.add("card")
+            return "[REDACTED_CARD]"
+        return m.group()  # not a real card — leave untouched
+
+    def _email(_m):
+        found.add("email")
+        return "[REDACTED_EMAIL]"
+
+    def _phone(_m):
+        found.add("phone")
+        return "[REDACTED_PHONE]"
+
+    # CVV (context-anchored) and cards first, before digit runs are tokenised away.
+    text = _CVV_RE.sub(_cvv, text)
+    text = _CARD_RE.sub(_card, text)
+    text = _EMAIL_RE.sub(_email, text)
+    text = _PHONE_RE.sub(_phone, text)
+    return text, sorted(found)
+
+
+# ---------------------------------------------------------------------------
 # Result contract
 # ---------------------------------------------------------------------------
 @dataclass(frozen=True)

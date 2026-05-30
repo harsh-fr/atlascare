@@ -15,7 +15,9 @@ from openai import (
     APIConnectionError, APITimeoutError, InternalServerError,
 )
 
-from agent.guardrails import AUTO_REFUND_LIMIT_INR, Guardrails, detect_safety_escalation
+from agent.guardrails import (
+    AUTO_REFUND_LIMIT_INR, Guardrails, detect_safety_escalation, redact_sensitive,
+)
 from utils.payment_methods import (
     INTERNAL_METHOD_LABELS as _INTERNAL_METHOD_LABELS,
     METHOD_ALIASES as _METHOD_ALIASES,
@@ -81,6 +83,7 @@ def _append_capped(left: list, right: list) -> list:
 
 class AtlasCareState(TypedDict):
     messages:              Annotated[list, _append_capped]
+    incoming_message:      str           # raw user message for this turn (pre-redaction)
     customer_id:           str
     session_id:            str
     guardrail_blocked:     bool
@@ -90,6 +93,7 @@ class AtlasCareState(TypedDict):
     task_complete:         bool
     pending_action:        dict | None   # persists via checkpointer across turns
     awaiting_confirmation: bool          # persists via checkpointer across turns
+    policy_grounding:      str           # KB articles retrieved for a policy question
     eval_retry_count:      int
     eval_feedback:         str
     eval_approved:         bool
@@ -716,6 +720,58 @@ _FILTER_SIGNALS = frozenset([
     "orders placed in", "orders from", "filter", "show only", "sort by",
 ])
 
+# ---------------------------------------------------------------------------
+# Policy-question retrieval / grounding
+# ---------------------------------------------------------------------------
+# A GENERAL policy / how-it-works question (no specific order, no mutating action)
+# is answered by retrieving the relevant knowledge-base articles and grounding the
+# reply in them — rather than letting the model improvise policy from its own
+# (possibly wrong) priors. Maps the customer's wording onto KB tags.
+_POLICY_TOPIC_TAGS: dict[str, list[str]] = {
+    "refund":       ["refund", "policy"],
+    "return":       ["return", "window"],
+    "exchange":     ["return", "exchange"],
+    "warranty":     ["warranty"],
+    "guarantee":    ["warranty"],
+    "cancel":       ["cancel", "cancellation"],
+    "cancellation": ["cancel", "cancellation"],
+    "ship":         ["shipping", "delivery"],
+    "deliver":      ["shipping", "delivery"],
+    "address":      ["address"],
+    "escalat":      ["escalation", "sla"],
+    "specialist":   ["escalation", "sla"],
+    "threshold":    ["refund", "threshold"],
+}
+# Phrasing that signals an informational/policy question rather than an action.
+_POLICY_CUE_RE = re.compile(
+    r"\b(polic(?:y|ies)|window|eligible|allowed|how\s+long|how\s+many\s+days|"
+    r"what(?:'?s| is| are)?\s+(?:the|your)|do\s+you\s+(?:offer|accept|support|have)|"
+    r"can\s+i\s+(?:return|cancel|exchange)|how\s+do(?:es)?\s+\w+\s+work|terms)\b",
+    re.IGNORECASE,
+)
+
+
+def _detect_policy_query(message: str) -> list[str] | None:
+    """Return KB tags if `message` is a GENERAL policy question (no specific order
+    and no transactional action on one), else None. Order-specific or action
+    requests return None so the planner handles them normally."""
+    if not message:
+        return None
+    if _VALID_ORDER_RE.search(message):   # order-specific → planner, not general policy
+        return None
+    low = message.lower()
+    if not _POLICY_CUE_RE.search(low):
+        return None
+    tags: list[str] = []
+    for keyword, mapped in _POLICY_TOPIC_TAGS.items():
+        if keyword in low:
+            tags.extend(mapped)
+    if not tags:
+        return None
+    seen: set[str] = set()
+    return [t for t in tags if not (t in seen or seen.add(t))]
+
+
 def _is_complex(message: str) -> bool:
     """Route to PLANNER_MODEL (70B) for complex, mutating, filter, or order-specific queries;
     fall back to RESPONSE_MODEL (8B) for plain lookups to hit <3 s end-to-end."""
@@ -756,6 +812,12 @@ _MUTATING_TOOLS = frozenset({
     "cancel_item", "process_refund", "update_address", "update_address_raw",
     "create_crm_case", "escalate",
 })
+
+# Statuses for which an item may still be cancelled. Mirrors OmsTool.cancel_item's own
+# guard — kept here so _handle_cancel_item can reject a non-cancellable order BEFORE it
+# secures a refund trace (the atomicity block refunds first, so the OMS guard alone would
+# fire only AFTER money had already moved — see _handle_cancel_item).
+_CANCELLABLE_STATUSES = frozenset({"placed", "processing"})
 
 # Does the customer's message ask for an action (not just a lookup)? Used to
 # decide whether to loop back for a get_order→mutation chain, and whether a
@@ -1041,6 +1103,21 @@ async def _handle_cancel_item(args, customer_id, tracer):
                 "No further cancellation action is needed."
             )
         }, "success", False
+
+    # Order-status guard BEFORE any refund. Cancellation is valid only for placed/
+    # processing orders. OmsTool.cancel_item enforces this too, but the atomicity block
+    # below secures the refund trace FIRST and commits the cancel SECOND — so without
+    # this pre-check a shipped/delivered item would be auto-refunded and only THEN fail
+    # to cancel, leaking a refund for an item that can't be cancelled.
+    if order.get("status") not in _CANCELLABLE_STATUSES:
+        return {
+            "error": (
+                f"Order '{oid}' has status '{order.get('status')}' and can no longer be "
+                "cancelled — only orders that are still placed or processing are eligible. "
+                "If the item arrived damaged or you'd like to return it, let me know and "
+                "I can look into that instead."
+            )
+        }, "error", False
 
     original_method  = order.get("payment_method", "original")
     requested_method = args.get("refund_method")
@@ -1450,6 +1527,27 @@ def _build_responder_messages(
     ]
 
 
+async def input_redaction_node(state: AtlasCareState, config) -> dict:
+    """Compliance gate — the true entry point. Deterministically masks sensitive
+    data (card numbers, CVVs, emails, phones) in the customer's message BEFORE it
+    enters the conversation history, reaches the LLM, or is checkpointed. AtlasCare
+    never needs this data to service an order, so masking it is a safe PCI/PII control
+    that no prompt can defeat. The raw message arrives via `incoming_message`; the
+    redacted copy is appended to `messages` (the append-only channel) so every
+    downstream consumer only ever sees the masked text.
+    """
+    tracer: Tracer = config["configurable"]["tracer"]
+    raw = state.get("incoming_message", "") or ""
+    redacted, found = redact_sensitive(raw)
+    if found:
+        logger.info("Input redaction masked sensitive data | types=%s", found)
+        tracer.record_tool_call("input_redaction", "redact", "success", {"types": found})
+    return {
+        "messages":         [{"role": "user", "content": redacted}],
+        "incoming_message": "",
+    }
+
+
 async def confirmation_check_node(state: AtlasCareState, config) -> dict:
     """First node every turn. If a confirmation was pending, resolve it before anything else."""
     if not state.get("awaiting_confirmation"):
@@ -1637,6 +1735,45 @@ async def pre_guardrail_node(state: AtlasCareState, config) -> dict:
     return {"guardrail_blocked": False}
 
 
+async def policy_grounding_node(state: AtlasCareState, config) -> dict:
+    """Retrieval/grounding step. For a GENERAL policy question, fetch the relevant
+    KB articles deterministically and stash them as `policy_grounding` so the
+    responder answers from official policy text instead of improvising. A pure
+    policy question is then routed straight to the responder (see
+    _route_policy_grounding), skipping the planner LLM entirely — cheaper and
+    grounded. `policy_grounding` is always (re)set here so a stale value from a
+    previous turn (state persists via the checkpointer) never leaks into this one.
+    """
+    tracer: Tracer = config["configurable"]["tracer"]
+    raw  = _last_user_message(state["messages"])
+    tags = _detect_policy_query(raw)
+    if not tags:
+        return {"policy_grounding": ""}
+
+    articles = await _kb.search(tags=tags)
+    if not articles:
+        return {"policy_grounding": ""}
+
+    blocks = [
+        f"- {a.get('title', '').strip()}: {a.get('content', '').strip()}"
+        for a in articles[:3]
+    ]
+    grounding = (
+        "OFFICIAL POLICY REFERENCE — answer the customer's policy question using ONLY "
+        "these official articles. Quote the relevant figures (limits, days, windows) and "
+        "do NOT invent any policy not stated here:\n" + "\n".join(blocks)
+    )
+    tracer.record_tool_call("kb_grounding", "kb_grounding", "success",
+                            {"tags": tags, "matched": len(articles)})
+    return {"policy_grounding": grounding}
+
+
+def _route_policy_grounding(state: AtlasCareState) -> str:
+    # A general policy question was grounded from the KB → answer directly from it,
+    # skipping the planner. Anything else proceeds to the normal tool-planning path.
+    return "responder" if state.get("policy_grounding") else "tool_agent"
+
+
 async def tool_agent_node(state: AtlasCareState, config) -> dict:
     """Select tools and/or generate a direct reply.
 
@@ -1704,7 +1841,7 @@ async def tool_agent_node(state: AtlasCareState, config) -> dict:
 # confirmation (mirrors the ₹5,000 figure in the agent prompt). At or below this,
 # an unambiguous single-item cancel is executed directly — no needless confirmation.
 _CONFIRMATION_UNIT_PRICE_INR: float = 5000.0
-_CANCELLABLE_STATUSES = {"placed", "processing"}
+# (_CANCELLABLE_STATUSES is defined once near _MUTATING_TOOLS above.)
 
 
 def _name_key(name: str) -> tuple:
@@ -1855,6 +1992,12 @@ async def tool_executor_node(state: AtlasCareState, config) -> dict:
     if new_pending:
         result["pending_action"]        = new_pending
         result["awaiting_confirmation"] = True
+        # A staged confirmation means the turn is NOT resolved — we are waiting on the
+        # customer's "yes"/"no". Even if another sub-action mutated successfully this
+        # turn (mixed request), the overall turn stays open, so task_complete must be
+        # False; otherwise the UI prematurely announces "request resolved" while a
+        # confirmation is still pending.
+        result["task_complete"]         = False
     return result
 
 
@@ -1910,9 +2053,9 @@ async def responder_node(state: AtlasCareState, config) -> dict:
     if not state.get("execution_summary") and _is_pure_greeting(_last_user_message(state["messages"])):
         name = await _customer_first_name(state["customer_id"])
         greeting = (
-            f"Hi there, {name}! How can I assist you today?"
+            f"Hi there {name}, I'm AtlasCare — how may I assist you today?"
             if name else
-            "Hi there! How can I assist you today?"
+            "Hi there, I'm AtlasCare — how may I assist you today?"
         )
         return {"final_response": greeting}
 
@@ -1934,16 +2077,19 @@ async def responder_node(state: AtlasCareState, config) -> dict:
             ),
         }
 
-    # No tools were called this turn: agent answered directly from conversation history.
-    # Reconstruct tool context from the most recent tool messages in history so the
-    # responder can generate a properly-toned reply with verified data.
+    # No tools were called this turn: either a grounded policy answer (routed here
+    # straight from policy_grounding), or the agent answered from conversation history.
+    # Build context from the retrieved KB grounding and/or the most recent tool
+    # messages so the responder replies from verified data, never improvised policy.
     if not state["execution_summary"]:
-        prior_tool_lines = []
-        for m in state["messages"]:
-            if m.get("role") == "tool" and m.get("content"):
-                prior_tool_lines.append(m["content"])
-        if prior_tool_lines:
-            tool_context = "\n".join(prior_tool_lines)
+        grounding = state.get("policy_grounding", "")
+        prior_tool_lines = [
+            m["content"] for m in state["messages"]
+            if m.get("role") == "tool" and m.get("content")
+        ]
+        context_parts = [p for p in (grounding, "\n".join(prior_tool_lines)) if p]
+        if context_parts:
+            tool_context = "\n\n".join(context_parts)
             user_req = _last_user_message(state["messages"])
             resp_messages = _build_responder_messages(
                 user_req, tool_context,
@@ -1976,6 +2122,12 @@ async def responder_node(state: AtlasCareState, config) -> dict:
         else:
             tool_lines.append(f"[{s['tool']}] Error: {s['error']}")
     tool_context = "\n".join(tool_lines)
+
+    # Prepend any retrieved KB policy grounding so a mixed (policy + action) turn is
+    # still anchored in official policy text.
+    grounding = state.get("policy_grounding", "")
+    if grounding:
+        tool_context = f"{grounding}\n\n{tool_context}"
 
     messages = _build_responder_messages(
         user_request, tool_context,
@@ -2136,7 +2288,9 @@ def _route_tool_executor(state: AtlasCareState) -> str:
     return "tool_agent"
 
 def _route_pre_guardrail(state: AtlasCareState) -> str:
-    return "end" if state["guardrail_blocked"] else "tool_agent"
+    # "continue" (not "tool_agent") because the clean path now goes to policy_grounding
+    # first; the route key is what labels the edge in the rendered graph diagram.
+    return "end" if state["guardrail_blocked"] else "continue"
 
 def _route_tool_agent(state: AtlasCareState) -> str:
     last = state["messages"][-1]
@@ -2151,20 +2305,25 @@ def _route_post_guardrail(state: AtlasCareState) -> str:
 def build_graph(checkpointer=None):
     g = StateGraph(AtlasCareState)
 
+    g.add_node("input_redaction",   input_redaction_node)
     g.add_node("confirmation_check", confirmation_check_node)
     g.add_node("pre_guardrail",      pre_guardrail_node)
+    g.add_node("policy_grounding",   policy_grounding_node)
     g.add_node("tool_agent",         tool_agent_node)
     g.add_node("tool_executor",      tool_executor_node)
     g.add_node("post_guardrail",     post_guardrail_node)
     g.add_node("responder",          responder_node)
     g.add_node("evaluator",          evaluator_node)
 
-    g.add_edge(START, "confirmation_check")
+    g.add_edge(START, "input_redaction")
+    g.add_edge("input_redaction", "confirmation_check")
     g.add_conditional_edges("confirmation_check", _route_confirmation_check,
                             {"end": END, "post_guardrail": "post_guardrail",
                              "pre_guardrail": "pre_guardrail"})
     g.add_conditional_edges("pre_guardrail",  _route_pre_guardrail,
-                            {"end": END, "tool_agent": "tool_agent"})
+                            {"end": END, "continue": "policy_grounding"})
+    g.add_conditional_edges("policy_grounding", _route_policy_grounding,
+                            {"responder": "responder", "tool_agent": "tool_agent"})
     g.add_conditional_edges("tool_agent",     _route_tool_agent,
                             {"tools": "tool_executor", "respond": "post_guardrail"})
     g.add_conditional_edges("tool_executor", _route_tool_executor,

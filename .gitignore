@@ -78,6 +78,3 @@ data/users.json
 data/sessions.json
 data/refunds.json
 data/order_audit_log.json
-
-# External e2e harness output (not produced by this repo)
-_e2e_results.json

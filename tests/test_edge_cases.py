@@ -340,6 +340,32 @@ class TestRefundMethodBackstop:
         item2  = next(i for i in order["items"] if i["line_id"] == 2)
         assert item2["status"] != "cancelled", "item was cancelled despite refund failure"
 
+    def test_cancel_non_cancellable_order_does_not_refund(self, client, data_dir):
+        """ATOMICITY / status guard: a shipped (non-cancellable) order must be refused
+        BEFORE any refund is secured. The atomicity block secures the refund trace FIRST
+        and commits the cancel SECOND, so without a status pre-check a shipped item would
+        be auto-refunded and only THEN fail to cancel — leaking a refund for an item that
+        can never be cancelled. (ORD-78322 is shipped; line 3 is an ₹800 mouse that WOULD
+        disburse if the refund path were reached, since failure_rate is 0.)"""
+        body = _run(client, "Cancel item 3 from ORD-78322.", [
+            make_tool_mock("cancel_item", {"order_id": "ORD-78322", "line_id": 3}),
+            make_text_mock("That order has already shipped, so it can't be cancelled."),
+            make_approved_mock(),
+        ])
+        cc = [tc for tc in body["trace"]["tool_calls"] if tc["action"] == "cancel_item"]
+        assert cc and cc[0]["status"] == "error", "cancel on a shipped order must error"
+
+        # No refund may have been disbursed for the non-cancellable order.
+        refunds = json.loads((data_dir / "refunds.json").read_text())
+        leaked  = [r for r in refunds.get("refunds", []) if r.get("order_id") == "ORD-78322"]
+        assert not leaked, "a non-cancellable order must never produce a refund record"
+
+        # And the item must remain active — nothing was mutated.
+        orders = json.loads((data_dir / "orders.json").read_text())
+        order  = next(o for o in orders["orders"] if o["order_id"] == "ORD-78322")
+        item3  = next(i for i in order["items"] if i["line_id"] == 3)
+        assert item3["status"] != "cancelled"
+
     def test_process_refund_unsupported_method_blocked(self, client):
         """Handler-layer backstop: if an unsupported method reaches process_refund
         (e.g. a name the message guard doesn't recognise), it errors and disburses
@@ -414,6 +440,131 @@ class TestOrderIdNormalization:
         ])
         go = [tc for tc in body["trace"]["tool_calls"] if tc["action"] == "get_order"]
         assert go and go[0]["status"] == "success", "bare order number did not resolve"
+
+
+class TestInputRedaction:
+    """Compliance: sensitive data in the customer message is masked BEFORE it reaches
+    the LLM, the conversation history, or the trace/audit logs (PCI/PII hygiene)."""
+
+    def test_redacts_card_cvv_email_phone(self):
+        from agent.guardrails import redact_sensitive
+        red, found = redact_sensitive(
+            "my card 4539 1488 0343 6467 cvv 123, mail a.b@x.com or call +91 9876543210"
+        )
+        assert "4539" not in red and "6467" not in red and "[REDACTED_CARD]" in red
+        assert "[REDACTED_CVV]" in red
+        assert "a.b@x.com" not in red and "[REDACTED_EMAIL]" in red
+        assert "9876543210" not in red and "[REDACTED_PHONE]" in red
+        assert set(found) == {"card", "cvv", "email", "phone"}
+
+    def test_does_not_mask_order_ids_pincodes_amounts(self):
+        """No false positives on the IDs/amounts this domain actually uses."""
+        from agent.guardrails import redact_sensitive
+        text = "Refund 55000 for ORD-10014 shipped to pincode 560034"
+        red, found = redact_sensitive(text)
+        assert red == text and found == []
+
+    def test_luhn_rejects_non_card_digit_runs(self):
+        from agent.guardrails import redact_sensitive
+        _, found = redact_sensitive("reference number 1234567812345678")  # 16 digits, not Luhn
+        assert "card" not in found
+
+    def test_idempotent(self):
+        from agent.guardrails import redact_sensitive
+        once, _   = redact_sensitive("card 4539148803436467")
+        twice, f2 = redact_sensitive(once)
+        assert once == twice and f2 == []
+
+    def test_card_masked_before_llm_and_recorded(self, client):
+        """The model and the trace must never see the raw PAN; masking is recorded."""
+        mock_client = MagicMock()
+        mock_client.chat.completions.create = AsyncMock(side_effect=[
+            make_text_mock("I can't take card details here, but I can help with your order."),
+            make_text_mock("I can't take card details here, but I can help with your order."),
+        ])
+        with patch("agent.graph._groq_client", mock_client):
+            resp = client.post("/query", json={
+                "message": "please use card 4539 1488 0343 6467 to refund me",
+                "session_id": "sess-cust001",
+            })
+            body = resp.json()
+        sent = json.dumps(mock_client.chat.completions.create.call_args_list, default=str)
+        assert "4539" not in sent and "6467" not in sent, "raw PAN reached the LLM"
+        assert "[REDACTED_CARD]" in sent
+        assert "redact" in _actions(body), "redaction must be recorded in the trace"
+        assert "6467" not in json.dumps(body, default=str), "PAN leaked into the response/trace"
+
+
+class TestPolicyGrounding:
+    """A general policy question is answered from retrieved KB articles and skips the
+    planner LLM entirely (retrieval-augmented, grounded, cheaper)."""
+
+    def test_detect_policy_query_positive(self, patched_env):
+        from agent.graph import _detect_policy_query as d
+        assert d("What is your refund policy?")
+        assert d("How long is the return window?")
+        assert d("Do you offer warranty?")
+        assert d("Can I cancel my order?")
+
+    def test_detect_policy_query_negative(self, patched_env):
+        from agent.graph import _detect_policy_query as d
+        assert d("Cancel item 1 on ORD-78321") is None   # order-specific action
+        assert d("where is my order ORD-78321") is None   # order-specific lookup
+        assert d("refund 50000") is None                  # action, no policy cue
+        assert d("hi there") is None                      # greeting
+
+    def test_policy_question_grounds_and_skips_planner(self, client):
+        mock_client = MagicMock()
+        mock_client.chat.completions.create = AsyncMock(side_effect=[
+            make_text_mock("Refunds up to Rs.25,000 are automatic; larger amounts escalate."),
+        ])
+        with patch("agent.graph._groq_client", mock_client):
+            resp = client.post("/query", json={
+                "message": "What is your refund policy?", "session_id": "sess-cust001",
+            })
+            body = resp.json()
+        acts = _actions(body)
+        assert "kb_grounding" in acts, "policy question should retrieve KB grounding"
+        assert "plan" not in acts, "a pure policy question must skip the planner LLM"
+        # The retrieved KB policy text must reach the responder model (true grounding).
+        sent = json.dumps(mock_client.chat.completions.create.call_args_list, default=str)
+        assert "25,000" in sent
+
+
+class TestPendingConfirmationCompletion:
+    """A turn that stages a confirmation is NOT resolved. task_complete must be False
+    even when another sub-action mutated successfully in the same (mixed) turn — else
+    the UI prematurely announces 'request resolved' while a confirmation is still
+    pending (the reported Q1 bug: a high-value cancel awaiting 'yes' alongside a
+    completed refund showed the resolved banner)."""
+
+    def test_mixed_turn_with_pending_confirmation_not_complete(self, client):
+        body = _run(
+            client,
+            "Cancel the laptop on ORD-78321 and refund item 1 on ORD-78323.",
+            [
+                make_multi_tool_mock([
+                    ("request_confirmation", {
+                        "action":               "cancel_item",
+                        "action_params":        {"order_id": "ORD-78321", "line_id": 1},
+                        "confirmation_message": "The Dell Inspiron laptop costs "
+                                                "₹55,000. Are you sure you want to cancel it?",
+                    }),
+                    ("process_refund", {
+                        "order_id": "ORD-78323", "amount_inr": 800.0, "method": "original",
+                    }),
+                ]),
+                make_text_mock("I've refunded ₹800. Please confirm the laptop cancellation."),
+                make_approved_mock(),
+            ],
+        )
+        acts = _actions(body)
+        assert "request_confirmation" in acts, "the high-value cancel should be staged"
+        assert "process_refund" in acts, "the refund sub-action should still run"
+        assert body["task_complete"] is False, (
+            "a pending confirmation means the turn is not resolved, even though a "
+            "refund mutated this turn"
+        )
 
 
 class TestMixedEscalationResponder:

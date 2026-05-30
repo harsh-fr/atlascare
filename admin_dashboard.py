@@ -443,15 +443,22 @@ with gr.Blocks(title="AtlasCare Admin", theme=gr.themes.Soft()) as dashboard:
                 except Exception:
                     fallback = (
                         "graph TD\n"
-                        "    A([START]) --> B[pre_guardrail]\n"
+                        "    A([START]) --> R[input_redaction]\n"
+                        "    R --> CC[confirmation_check]\n"
+                        "    CC -->|pending resolved| E[post_guardrail]\n"
+                        "    CC -->|normal| B[pre_guardrail]\n"
                         "    B -->|blocked| Z([END])\n"
-                        "    B -->|allow| C[tool_agent]\n"
+                        '    B -->|allow| P["policy_grounding (KB retrieval)"]\n'
+                        "    P -->|Q&A via RAG| F[responder]\n"
+                        "    P -->|action via tools| C[tool_agent]\n"
                         "    C -->|tool calls| D[tool_executor]\n"
-                        "    C -->|no tools| E[post_guardrail]\n"
+                        "    C -->|no tools| E\n"
                         "    D --> E\n"
                         "    E -->|blocked| Z\n"
-                        "    E -->|allow| F[responder]\n"
-                        "    F --> Z"
+                        "    E -->|allow| F\n"
+                        "    F --> EV[evaluator]\n"
+                        "    EV -->|approved| Z\n"
+                        "    EV -->|retry once| F"
                     )
                     return (
                         '<div style="background:#1e1e2e; color:#cdd6f4; padding:16px; border-radius:8px;">'
@@ -460,6 +467,16 @@ with gr.Blocks(title="AtlasCare Admin", theme=gr.themes.Soft()) as dashboard:
                         '</div>'
                     )
 
+            gr.Markdown(
+                "**Two branches share one graph.** A **Q&A-via-RAG** path — "
+                "`policy_grounding → responder` — answers general policy questions from "
+                "the knowledge base and skips the planner entirely (one grounded LLM "
+                "call, no tool loop). The **Action-via-Tools** path — "
+                "`tool_agent → tool_executor` — handles order lookups and mutations. "
+                "The fork is the conditional edge out of **policy_grounding**. "
+                "`input_redaction` masks PII at the front door; `pre`/`post_guardrail` "
+                "enforce deterministic policy; `evaluator` is the LLM-as-judge (one retry)."
+            )
             graph_display = gr.HTML(_graph_html())
             gr.Button("🔄 Refresh Graph").click(fn=_graph_html, outputs=graph_display)
 

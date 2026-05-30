@@ -16,6 +16,7 @@ from langgraph.checkpoint.memory import MemorySaver
 from models.request_models import QueryRequest, sanitise_validation_errors
 from models.response_models import QueryResponse, TraceModel
 from agent.graph import build_graph, _crm as _graph_crm, _kb as _graph_kb
+from agent.guardrails import redact_sensitive
 from observability.logger import configure_logging
 from observability.tracer import Tracer
 from observability.trace_store import get_store
@@ -120,9 +121,13 @@ async def health():
 async def query(request: QueryRequest, http_request: Request) -> QueryResponse:
     wall_start = time.monotonic()
     tracer = Tracer(session_id=request.session_id)
+    # Redact sensitive data (card/CVV/email/phone) before it touches any log or the
+    # trace store. The agent graph's input_redaction node masks it for the LLM and
+    # conversation history; this covers the observability sinks main.py owns.
+    safe_message = redact_sensitive(request.message)[0]
     logger.info(
         "Received query | session=%s | trace=%s | message_preview=%.80r",
-        request.session_id, tracer.trace_id, request.message,
+        request.session_id, tracer.trace_id, safe_message,
     )
 
     session_store: SessionStore = http_request.app.state.session_store
@@ -141,7 +146,11 @@ async def query(request: QueryRequest, http_request: Request) -> QueryResponse:
     else:
         tracer.set_customer_id(customer_id)
         initial_state = {
-            "messages":          [{"role": "user", "content": request.message}],
+            # The raw message enters via incoming_message; the input_redaction node
+            # masks it and appends the redacted copy to the (append-only) messages
+            # channel, so the LLM and checkpointer only ever see the masked text.
+            "messages":          [],
+            "incoming_message":  request.message,
             "session_id":        request.session_id,
             "customer_id":       customer_id,
             "guardrail_blocked": False,
@@ -149,6 +158,7 @@ async def query(request: QueryRequest, http_request: Request) -> QueryResponse:
             "tool_call_count":   0,
             "final_response":    "",
             "task_complete":     False,
+            "policy_grounding":  "",
             "eval_retry_count":  0,
             "eval_feedback":     "",
             "eval_approved":     False,
@@ -192,7 +202,7 @@ async def query(request: QueryRequest, http_request: Request) -> QueryResponse:
         trace_id=tracer.trace_id,
         session_id=request.session_id,
         customer_id=tracer.customer_id,
-        message=request.message,
+        message=safe_message,
         response=response_text,
         latency_ms=latency_ms,
         tool_calls=tracer.tool_calls,
