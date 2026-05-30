@@ -67,6 +67,10 @@ def _bootstrap_support_files() -> None:
             logger.warning("Support file bootstrap | %s", line)
         for line in report["errors"]:
             logger.error("Support file bootstrap | %s", line)
+        # Refresh the lazy category cache so it reflects the just-derived files
+        # (in case anything read it before they existed).
+        from agent.graph import _categories
+        _categories.reload()
     except Exception as exc:  # never block startup on bootstrap
         logger.error("Support-file bootstrap failed: %s", exc)
 

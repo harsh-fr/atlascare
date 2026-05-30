@@ -78,3 +78,5 @@ data/users.json
 data/sessions.json
 data/refunds.json
 data/order_audit_log.json
+data/product_categories.json
+data/category_policies.json

@@ -530,6 +530,101 @@ class TestPolicyGrounding:
         sent = json.dumps(mock_client.chat.completions.create.call_args_list, default=str)
         assert "25,000" in sent
 
+    def test_informational_unauthorised_question_suppresses_escalation(self, patched_env):
+        """'What are the policies regarding orders I did not place' is an INFORMATIONAL
+        policy question — the 'did not place' phrase must not auto-escalate it as a
+        fraud report. It maps to the unauthorized-orders policy (KB-007) tags."""
+        from agent.graph import _is_policy_question_not_fraud, _detect_policy_query
+        from agent.guardrails import detect_safety_escalation
+        q = "What are the policies regarding orders that I did not place?"
+        reason = detect_safety_escalation(q)
+        assert reason == "fraud_or_unauthorised"           # the phrase still matches
+        assert _is_policy_question_not_fraud(q, reason)     # but it's a question → suppress
+        assert _detect_policy_query(q) == ["unauthorized", "fraud", "security"]
+
+    def test_genuine_fraud_report_still_escalates(self, patched_env):
+        """A real first-person report must NOT be suppressed — defence stays intact."""
+        from agent.graph import _is_policy_question_not_fraud
+        from agent.guardrails import detect_safety_escalation
+        for q in ("I never placed this order, this is fraud",
+                  "I did not place order ORD-10008",
+                  "someone else used my account"):
+            reason = detect_safety_escalation(q)
+            assert reason is not None, q
+            assert not _is_policy_question_not_fraud(q, reason), q
+
+    def test_unauthorised_policy_question_not_escalated_end_to_end(self, client):
+        """End to end: the exemplar query must not produce a safety escalation / case."""
+        mock_client = MagicMock()
+        mock_client.chat.completions.create = AsyncMock(
+            return_value=make_text_mock(
+                "Orders you did not place are handled by our security team; "
+                "please change your password and we'll respond within 24 hours."
+            )
+        )
+        with patch("agent.graph._groq_client", mock_client):
+            resp = client.post("/query", json={
+                "message": "What are the policies regarding orders that I did not place?",
+                "session_id": "sess-cust001",
+            })
+            body = resp.json()
+        assert "escalate" not in _actions(body), (
+            "an informational policy question must not auto-escalate as fraud"
+        )
+        assert "specialist team needs to handle" not in body["response"]
+
+
+class TestProductCategoryDerivation:
+    """Product->category and category->policies are DERIVED purely from the canonical
+    files: the category vocab comes from kb_articles.applies_to, classification is a
+    deterministic keyword cross-check (no LLM), and category_policies inverts applies_to."""
+
+    def test_classify_product_deterministic(self, patched_env):
+        from data.derive_support_files import classify_product
+        cats = ["apparel", "electronics", "home_goods"]
+        assert classify_product("PROD-LAPTOP-XPS Dell XPS 13 Plus Laptop", cats)[0] == "electronics"
+        assert classify_product("PROD-SAREE-055 Kanjeevaram Silk Saree", cats)[0] == "apparel"
+        assert classify_product("PROD-WM-007 Bosch Front Load Washing Machine", cats)[0] == "home_goods"
+        # most-specific keyword wins: 'apple watch' (electronics) beats generic 'watch'.
+        assert classify_product("PROD-WATCH-009 Apple Watch Series 9", cats)[0] == "electronics"
+        assert classify_product("PROD-WATCH-002 Fastrack Analog Watch", cats)[0] == "apparel"
+        # plural tolerance: 'Juttis' matches 'jutti'.
+        assert classify_product("PROD-JUTTI-001 Kolhapuri Juttis", cats)[0] == "apparel"
+
+    def test_categories_come_from_applies_to_not_hardcoded(self, patched_env):
+        from data.derive_support_files import _categories_from_kb
+        articles = [{"applies_to": ["books", "toys"]}, {"applies_to": ["toys"]}]
+        assert _categories_from_kb(articles) == ["books", "toys"]
+
+    def test_classification_restricted_to_vocab_with_fallback(self, patched_env):
+        from data.derive_support_files import classify_products
+        # vocab has no 'electronics'; an unmatched product falls back into the vocab.
+        cats = ["apparel", "home_goods"]
+        mapping, unmatched = classify_products({"PROD-X": "Mystery Widget Thing"}, cats)
+        assert mapping["PROD-X"]["category"] in cats
+        assert "PROD-X" in unmatched
+
+    def test_derive_category_policies_inverts_applies_to(self, patched_env):
+        from data.derive_support_files import derive_category_policies
+        articles = [
+            {"article_id": "KB-1", "title": "Refund", "tags": ["refund"],
+             "applies_to": ["electronics", "apparel"]},
+            {"article_id": "KB-2", "title": "Return", "tags": ["return"],
+             "applies_to": ["apparel"]},
+        ]
+        out = derive_category_policies(articles, ["apparel", "electronics"])
+        assert {e["article_id"] for e in out["apparel"]} == {"KB-1", "KB-2"}
+        assert {e["article_id"] for e in out["electronics"]} == {"KB-1"}
+        assert out["apparel"][0]["tags"] == ["refund"]
+
+    def test_filter_articles_by_category(self, patched_env):
+        from agent.graph import _filter_articles_by_category
+        arts = [{"id": "A", "applies_to": ["electronics"]},
+                {"id": "B", "applies_to": ["apparel"]}]
+        assert [a["id"] for a in _filter_articles_by_category(arts, ["electronics"])] == ["A"]
+        assert len(_filter_articles_by_category(arts, [])) == 2          # no category → unchanged
+        assert len(_filter_articles_by_category(arts, ["home_goods"])) == 2  # never empty by filter alone
+
 
 class TestPendingConfirmationCompletion:
     """A turn that stages a confirmation is NOT resolved. task_complete must be False

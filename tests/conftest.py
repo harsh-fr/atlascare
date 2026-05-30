@@ -390,6 +390,8 @@ def patched_env(data_dir: Path, monkeypatch: pytest.MonkeyPatch):
     monkeypatch.setenv("REFUNDS_DATA_PATH",   str(data_dir / "refunds.json"))
     monkeypatch.setenv("SESSIONS_DATA_PATH",  str(data_dir / "sessions.json"))
     monkeypatch.setenv("USERS_DATA_PATH",     str(data_dir / "users.json"))
+    monkeypatch.setenv("PRODUCT_CATEGORIES_PATH", str(data_dir / "product_categories.json"))
+    monkeypatch.setenv("CATEGORY_POLICIES_PATH",  str(data_dir / "category_policies.json"))
 
 
 # ---------------------------------------------------------------------------

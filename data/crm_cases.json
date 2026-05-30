@@ -148,17 +148,6 @@
       "amount_inr": 42000.0,
       "trace_id": "trc-historical02",
       "created_at": "2026-05-17T14:34:07.089321+00:00"
-    },
-    {
-      "case_id": "CASE-1B358E",
-      "customer_id": "CUST-001",
-      "order_id": "N/A",
-      "status": "open",
-      "priority": "high",
-      "description": "[ESCALATION CASE — AtlasCare]\nCustomer  : CUST-001\nOrder     : N/A\nPriority  : HIGH\nAmount    : N/A\nReason    : Auto-escalated by safety guardrail [fraud_or_unauthorised]. Customer message requires specialist handling; autonomous action withheld.\nAction    : Requires specialist review. Please contact the customer to resolve their query.\nTrace ID  : trc-e1984222ecca\nCreated   : 2026-05-30 10:34 UTC",
-      "amount_inr": null,
-      "trace_id": "trc-e1984222ecca",
-      "created_at": "2026-05-30T10:34:08.239008+00:00"
     }
   ]
 }

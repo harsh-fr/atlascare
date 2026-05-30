@@ -31,6 +31,7 @@ from tools.payment_tool import PaymentTool, RefundThresholdError
 from tools.kb_tool import KbTool
 from observability.tracer import Tracer
 from repositories.audit_repository import AuditRepository
+from repositories.category_repository import CategoryRepository
 
 logger = logging.getLogger(__name__)
 
@@ -40,6 +41,7 @@ _crm        = CrmTool()
 _payment    = PaymentTool()
 _kb         = KbTool()
 _audit      = AuditRepository()
+_categories = CategoryRepository()   # derived product->category + category->policies
 
 # Human-readable form of the config-driven auto-refund threshold, interpolated
 # into tool descriptions and the agent prompt so the model's escalation logic
@@ -741,6 +743,21 @@ _POLICY_TOPIC_TAGS: dict[str, list[str]] = {
     "escalat":      ["escalation", "sla"],
     "specialist":   ["escalation", "sla"],
     "threshold":    ["refund", "threshold"],
+    # Unauthorized / fraud as a POLICY topic (KB-007). These let an *informational*
+    # question — "what are the policies regarding orders I did not place" — retrieve
+    # the unauthorized-orders policy instead of being mis-escalated as a fraud report.
+    # (A genuine first-person report has no policy cue, so it still escalates in
+    # pre_guardrail — see _is_policy_question_not_fraud.)
+    "did not place":  ["unauthorized", "fraud", "security"],
+    "didn't place":   ["unauthorized", "fraud", "security"],
+    "did not order":  ["unauthorized", "fraud", "security"],
+    "never placed":   ["unauthorized", "fraud", "security"],
+    "never ordered":  ["unauthorized", "fraud", "security"],
+    "not my order":   ["unauthorized", "fraud", "security"],
+    "someone else":   ["unauthorized", "fraud", "security"],
+    "unauthor":       ["unauthorized", "fraud", "security"],
+    "fraud":          ["unauthorized", "fraud", "security"],
+    "hacked":         ["unauthorized", "fraud", "security"],
 }
 # Phrasing that signals an informational/policy question rather than an action.
 _POLICY_CUE_RE = re.compile(
@@ -749,6 +766,36 @@ _POLICY_CUE_RE = re.compile(
     r"can\s+i\s+(?:return|cancel|exchange)|how\s+do(?:es)?\s+\w+\s+work|terms)\b",
     re.IGNORECASE,
 )
+
+# An explicit "asking ABOUT policy" frame. Used to tell an informational policy
+# question ("what are the policies regarding orders I did not place") apart from a
+# first-person fraud report ("I never placed this order"), which share the literal
+# words 'did not place'. Only the question frame suppresses the fraud escalation.
+_ASKING_ABOUT_POLICY_RE = re.compile(
+    r"(what(?:'?s| is| are)\s+(?:the|your)\s+polic"
+    r"|polic(?:y|ies)\s+(?:regarding|for|on|about|when|if|around)"
+    r"|what\s+happens\s+if"
+    r"|do\s+you\s+have\s+(?:a|any)\s+polic"
+    r"|tell\s+me\s+(?:about\s+)?(?:the|your)\s+polic)",
+    re.IGNORECASE,
+)
+
+
+def _is_policy_question_not_fraud(message: str, safety_reason: str | None) -> bool:
+    """True when a fraud/unauthorised safety match is actually an INFORMATIONAL
+    policy question, not a report — so it should be answered from the KB rather
+    than auto-escalated. Deliberately strict: only the 'fraud_or_unauthorised'
+    category qualifies, there must be NO concrete order reference, NO explicit
+    fraud/hack/theft assertion, and the message must use an 'asking about policy'
+    frame. Genuine reports never match and still escalate."""
+    if safety_reason != "fraud_or_unauthorised":
+        return False
+    if _VALID_ORDER_RE.search(message) or _BARE_ORDER_NUM_RE.search(message):
+        return False
+    if re.search(r"\b(fraud|unauthor\w*|hacked|compromised|breached|stolen|"
+                 r"identity\s+theft)\b", message, re.IGNORECASE):
+        return False
+    return bool(_ASKING_ABOUT_POLICY_RE.search(message))
 
 
 def _detect_policy_query(message: str) -> list[str] | None:
@@ -1413,6 +1460,18 @@ async def _handle_list_cases(args, customer_id, tracer):
 
 async def _handle_search_kb(args, customer_id, tracer):
     articles = await _kb.search(tags=args.get("tags", []))
+    # If the planner scoped the lookup to a specific order, narrow the articles to
+    # that order's product category as well (tags AND category). Ownership-checked;
+    # silently skipped if the order isn't resolvable or the category map is absent.
+    oid = args.get("order_id")
+    if oid:
+        try:
+            order = await _fetch_owned_order(_clean_order_id(str(oid)), customer_id)
+            articles = _filter_articles_by_category(
+                articles, _categories.categories_for_order(order)
+            )
+        except Exception:
+            pass
     return {"articles": articles}, "success", False
 
 async def _handle_request_confirmation(args, customer_id, tracer):
@@ -1704,8 +1763,11 @@ async def pre_guardrail_node(state: AtlasCareState, config) -> dict:
     # Code-enforced safety backstop — takes precedence over everything. A
     # high-severity fraud/safety/legal report is escalated deterministically and
     # never handled by an autonomous tool action (no refund/cancel possible).
+    # EXCEPTION: an informational policy question that merely *mentions* unauthorised
+    # orders ("what are the policies regarding orders I did not place") is NOT a
+    # report — let it fall through to policy_grounding, which answers from KB-007.
     safety_reason = detect_safety_escalation(raw)
-    if safety_reason:
+    if safety_reason and not _is_policy_question_not_fraud(raw, safety_reason):
         return await _force_safety_escalation(state, tracer, raw, safety_reason)
 
     verdict = _guardrails.pre_check(raw, state["customer_id"], tracer)
@@ -1735,6 +1797,39 @@ async def pre_guardrail_node(state: AtlasCareState, config) -> dict:
     return {"guardrail_blocked": False}
 
 
+def _filter_articles_by_category(articles: list[dict], categories: list[str]) -> list[dict]:
+    """Keep only articles whose `applies_to` intersects the product categories in
+    context — so the graph selects policy by BOTH tag relevance and product
+    category. Never returns empty solely because of the category filter: if the
+    filter would drop everything, the tag-ranked list is returned unchanged (a
+    relevant-by-tag article missing applies_to should still surface)."""
+    if not categories:
+        return articles
+    cats = set(categories)
+    filtered = [a for a in articles if set(a.get("applies_to", []) or []) & cats]
+    return filtered or articles
+
+
+async def _resolve_context_categories(state: AtlasCareState) -> list[str]:
+    """Product categories of any order referenced in this turn's conversation,
+    via the derived product->category map. Ownership-checked: only the session's
+    own orders contribute. Empty when no order is in context or the map is absent."""
+    text = " ".join(
+        m["content"] for m in state.get("messages", [])
+        if isinstance(m.get("content"), str)
+    )
+    cats: list[str] = []
+    for oid in _extract_order_ids(text)[-3:]:
+        try:
+            order = await _fetch_owned_order(oid, state["customer_id"])
+        except Exception:
+            continue
+        for c in _categories.categories_for_order(order):
+            if c not in cats:
+                cats.append(c)
+    return cats
+
+
 async def policy_grounding_node(state: AtlasCareState, config) -> dict:
     """Retrieval/grounding step. For a GENERAL policy question, fetch the relevant
     KB articles deterministically and stash them as `policy_grounding` so the
@@ -1743,6 +1838,11 @@ async def policy_grounding_node(state: AtlasCareState, config) -> dict:
     _route_policy_grounding), skipping the planner LLM entirely — cheaper and
     grounded. `policy_grounding` is always (re)set here so a stale value from a
     previous turn (state persists via the checkpointer) never leaks into this one.
+
+    Retrieval is keyed on BOTH the relevant tags (from the question wording) and
+    the relevant product category (resolved from any in-context order via the
+    derived product->category map), so the correct, category-applicable policy is
+    chosen rather than just any tag match.
     """
     tracer: Tracer = config["configurable"]["tracer"]
     raw  = _last_user_message(state["messages"])
@@ -1750,7 +1850,9 @@ async def policy_grounding_node(state: AtlasCareState, config) -> dict:
     if not tags:
         return {"policy_grounding": ""}
 
+    categories = await _resolve_context_categories(state)
     articles = await _kb.search(tags=tags)
+    articles = _filter_articles_by_category(articles, categories)
     if not articles:
         return {"policy_grounding": ""}
 
@@ -1758,13 +1860,14 @@ async def policy_grounding_node(state: AtlasCareState, config) -> dict:
         f"- {a.get('title', '').strip()}: {a.get('content', '').strip()}"
         for a in articles[:3]
     ]
+    scope = f" (product category: {', '.join(categories)})" if categories else ""
     grounding = (
         "OFFICIAL POLICY REFERENCE — answer the customer's policy question using ONLY "
-        "these official articles. Quote the relevant figures (limits, days, windows) and "
-        "do NOT invent any policy not stated here:\n" + "\n".join(blocks)
+        f"these official articles{scope}. Quote the relevant figures (limits, days, "
+        "windows) and do NOT invent any policy not stated here:\n" + "\n".join(blocks)
     )
     tracer.record_tool_call("kb_grounding", "kb_grounding", "success",
-                            {"tags": tags, "matched": len(articles)})
+                            {"tags": tags, "categories": categories, "matched": len(articles)})
     return {"policy_grounding": grounding}
 
 
